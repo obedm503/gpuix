@@ -145,6 +145,60 @@ export function renderSlot(args: {
   return child as never
 }
 
+type InteractiveStyle = Omit<StyleDesc, "hover" | "active">
+
+function floatingSurfaceStateStyle(style?: InteractiveStyle): InteractiveStyle | undefined {
+  if (!style) return undefined
+  const surface: InteractiveStyle = {}
+  if (style.visibility !== undefined) surface.visibility = style.visibility
+  if (style.opacity !== undefined) surface.opacity = style.opacity
+  if (style.borderRadius !== undefined) surface.borderRadius = style.borderRadius
+  if (style.borderTopLeftRadius !== undefined) {
+    surface.borderTopLeftRadius = style.borderTopLeftRadius
+  }
+  if (style.borderTopRightRadius !== undefined) {
+    surface.borderTopRightRadius = style.borderTopRightRadius
+  }
+  if (style.borderBottomRightRadius !== undefined) {
+    surface.borderBottomRightRadius = style.borderBottomRightRadius
+  }
+  if (style.borderBottomLeftRadius !== undefined) {
+    surface.borderBottomLeftRadius = style.borderBottomLeftRadius
+  }
+  return Object.keys(surface).length > 0 ? surface : undefined
+}
+
+function floatingSurfaceStyle(style?: StyleDesc): StyleDesc {
+  const surface: StyleDesc = floatingSurfaceStateStyle(style) ?? {}
+  const hover = floatingSurfaceStateStyle(style?.hover)
+  const active = floatingSurfaceStateStyle(style?.active)
+  if (hover) surface.hover = hover
+  if (active) surface.active = active
+  return surface
+}
+
+function withoutOpacity(style?: InteractiveStyle): InteractiveStyle | undefined {
+  if (!style) return undefined
+  const { opacity: _opacity, ...rest } = style
+  return rest
+}
+
+function floatingContentStyle(style?: StyleDesc): StyleDesc | undefined {
+  if (!style) return undefined
+  const { opacity: _opacity, hover, active, ...rest } = style
+  return {
+    ...rest,
+    hover: withoutOpacity(hover),
+    active: withoutOpacity(active),
+  }
+}
+
+/**
+ * The deferred surface behind Select, Combobox and Tooltip content. Like the
+ * React `FloatingLayer`, radii, visibility and opacity go on the outer
+ * anchored surface. Fill, border, shadow and layout stay on the inner
+ * content, which is the only thing that paints.
+ */
 export function FloatingLayer(props: FloatingContentProps): JSX.Element {
   const side = props.side ?? "bottom"
   const align = props.align ?? "start"
@@ -153,6 +207,10 @@ export function FloatingLayer(props: FloatingContentProps): JSX.Element {
     ? { x: alignOffset, y: 0 }
     : { x: 0, y: alignOffset }
   return jsx("anchored", {
+    // The content below always paints a fill, so the anchored layer declares
+    // a transparent one and gets no fallback quad. A fallback rounded to the
+    // same radius still shows its anti-aliased edge around each corner.
+    get style() { return { ...floatingSurfaceStyle(props.style), backgroundColor: "transparent" } },
     side,
     align,
     gap: props.sideOffset ?? 0,
@@ -165,7 +223,9 @@ export function FloatingLayer(props: FloatingContentProps): JSX.Element {
     get children() {
       return jsx("div", {
         ...props,
-        style: mergeStyles({ backgroundColor: "#1A1A1A" }, props.style),
+        get style() {
+          return mergeStyles({ backgroundColor: "#1A1A1A" }, floatingContentStyle(props.style))
+        },
         get children() { return props.children },
       })
     },

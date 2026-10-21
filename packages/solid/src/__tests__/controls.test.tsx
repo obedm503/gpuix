@@ -11,6 +11,7 @@ import {
   DialogPortal,
   DialogTitle,
   DialogTrigger,
+  FloatingLayer,
   ComboboxInput,
   ComboboxItem,
   Select,
@@ -85,6 +86,80 @@ describe.skipIf(!hasNativeTestRenderer)("Solid controls", () => {
     expect(app.renderer.getAllText()).toContain("help")
     app.renderer.nativeSimulateClick(bounds.x + 10, bounds.y + 10)
     expect(app.renderer.getAllText()).not.toContain("help")
+  })
+
+  it("forwards outer surface styles without multiplying opacity", () => {
+    const app = createTestRoot()
+    app.render(() => (
+      <div style={{ width: 400, height: 300 }}>
+        <FloatingLayer
+          style={{
+            width: 120,
+            height: 60,
+            visibility: "hidden",
+            opacity: 0.5,
+            pointerEvents: "none",
+            borderRadius: 16,
+            borderTopLeftRadius: 4,
+            borderTopRightRadius: 8,
+            borderBottomRightRadius: 12,
+            borderBottomLeftRadius: 20,
+            hover: {
+              opacity: 0.75,
+              borderTopLeftRadius: 24,
+              backgroundColor: "#222222",
+            },
+            active: {
+              opacity: 0.9,
+              borderBottomRightRadius: 28,
+            },
+          }}
+        >
+          <text>Rounded layer</text>
+        </FloatingLayer>
+      </div>
+    ))
+
+    const anchored = app.renderer.findByType("anchored")[0]!
+    const content = app.renderer.getElement(anchored.children[0]!)
+    const surfaceHover = anchored.style.hover as Record<string, unknown>
+    const surfaceActive = anchored.style.active as Record<string, unknown>
+
+    expect({
+      backgroundColor: anchored.style.backgroundColor,
+      visibility: anchored.style.visibility,
+      opacity: anchored.style.opacity,
+      borderRadius: anchored.style.borderRadius,
+      borderTopLeftRadius: anchored.style.borderTopLeftRadius,
+      borderTopRightRadius: anchored.style.borderTopRightRadius,
+      borderBottomRightRadius: anchored.style.borderBottomRightRadius,
+      borderBottomLeftRadius: anchored.style.borderBottomLeftRadius,
+      hover: {
+        opacity: surfaceHover.opacity,
+        borderTopLeftRadius: surfaceHover.borderTopLeftRadius,
+        backgroundColor: surfaceHover.backgroundColor,
+      },
+      active: {
+        opacity: surfaceActive.opacity,
+        borderBottomRightRadius: surfaceActive.borderBottomRightRadius,
+      },
+      occlude: anchored.customProps?.occlude,
+    }).toEqual({
+      backgroundColor: "transparent",
+      visibility: "hidden",
+      opacity: 0.5,
+      borderRadius: 16,
+      borderTopLeftRadius: 4,
+      borderTopRightRadius: 8,
+      borderBottomRightRadius: 12,
+      borderBottomLeftRadius: 20,
+      hover: { opacity: 0.75, borderTopLeftRadius: 24, backgroundColor: null },
+      active: { opacity: 0.9, borderBottomRightRadius: 28 },
+      occlude: false,
+    })
+    expect(content?.style.opacity).toBeUndefined()
+    expect((content?.style.hover as Record<string, unknown>).opacity).toBeNull()
+    expect((content?.style.hover as Record<string, unknown>).backgroundColor).toBe("#222222")
   })
 
   it("moves focus with Tab through asChild triggers and keeps child handlers", () => {
