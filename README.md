@@ -1142,6 +1142,30 @@ THROTTLE=utility bun run test:perf
 THROTTLE=utility bun --hot chat.tsx
 ```
 
+## Next frame
+
+`renderer.onNextFrame(callback)` calls `callback` once, when GPUI starts its
+next frame and before it draws, like `requestAnimationFrame` in a browser.
+Mutations already sent are part of that frame, so a callback marks the moment
+JavaScript's last change starts painting. Use it to pace work to the frame
+rate, for example to drop held-key repeats while a slow frame is still drawing.
+
+```ts
+let waiting = false
+function step() {
+  if (waiting) return
+  moveSelection()
+  waiting = true
+  renderer.onNextFrame(() => {
+    waiting = false
+  })
+}
+```
+
+It is GPUI's `Window::on_next_frame`, delivered to JavaScript like an event, so
+the callback runs a little after the frame starts. A hidden window may not get
+a frame, and then the callback waits until it does.
+
 ## Hot reload
 
 ### 1. End the file with `render()`

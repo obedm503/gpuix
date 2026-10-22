@@ -455,6 +455,7 @@ enum UiCommand {
         response: SyncSender<DebugFrameOverlayStats>,
     },
     ResetDebugFrameOverlayStats,
+    OnNextFrame(Box<dyn FnOnce() + Send>),
     ScrollTo {
         id: u64,
         x: f32,
@@ -618,6 +619,11 @@ async fn run_ui_commands(
             UiCommand::ResetDebugFrameOverlayStats => window.update(cx, |_view, window, _cx| {
                 window.reset_debug_frame_overlay_stats();
             }),
+            UiCommand::OnNextFrame(callback) => {
+                window.update(cx, move |_view, window, _cx| {
+                    window.on_next_frame(move |_, _| callback());
+                })
+            }
             UiCommand::ScrollTo { id, x, y } => {
                 if !VIRTUAL_LIST_STATES.with(|cell| {
                     let states = cell.borrow();
@@ -1566,6 +1572,40 @@ impl GpuixRenderer {
         Err(Error::from_reason(
             "The production GPUIX renderer does not support this operating system",
         ))
+    }
+
+    /// Call `callback` once, when GPUI starts the next frame, before it draws.
+    /// Mutations applied before this call are part of that frame. Built on
+    /// GPUI's `Window::on_next_frame`, which also wakes an idle frame source.
+    #[napi]
+    pub fn on_next_frame(&self, callback: Function<(), ()>) -> Result<()> {
+        let callback = callback
+            .build_threadsafe_function::<()>()
+            .callee_handled::<false>()
+            .weak::<true>()
+            .build()?;
+        let callback = move || {
+            callback.call((), ThreadsafeFunctionCallMode::NonBlocking);
+        };
+
+        #[cfg(target_os = "macos")]
+        return update_window(move |_view, window, _cx| {
+            window.on_next_frame(move |_, _| callback());
+        });
+
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        return self.send_ui_command(UiCommand::OnNextFrame(Box::new(callback)));
+
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )))]
+        {
+            let _ = callback;
+            Err(Error::from_reason("Unsupported operating system"))
+        }
     }
 
     #[napi]

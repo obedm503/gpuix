@@ -61,6 +61,12 @@ export declare class GpuixRenderer {
   applyBatch(json: string): Array<number>
   /** Pump the native event loop. Returns false after the last window closes. */
   tick(): boolean
+  /**
+   * Call `callback` once, when GPUI starts the next frame, before it draws.
+   * Mutations applied before this call are part of that frame. Built on
+   * GPUI's `Window::on_next_frame`, which also wakes an idle frame source.
+   */
+  onNextFrame(callback: () => void): void
   isInitialized(): boolean
   /**
    * Wake JavaScript after the display link queues a frame. Returns true on macOS,

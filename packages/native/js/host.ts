@@ -711,6 +711,7 @@ export type NativeRenderer = MutationHost &
       | "cycleDebugFrameOverlay"
       | "resetDebugFrameOverlayStats"
       | "getDebugFrameOverlayStats"
+      | "onNextFrame"
     >
   >
 
