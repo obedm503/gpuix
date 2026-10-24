@@ -1985,6 +1985,13 @@ an arrow cursor, and keeps the press from reaching the content under it. A drag
 moves the same scroll offset the wheel does, so `onScrollChange` reports it, and
 a `<virtual-list>` holds its measured length still until the drag ends.
 
+A `<textarea>` with a `scrollbarColor` gets the same thumbs: down its right edge
+when its text is taller than the box, and along the bottom when `wrap={false}`
+lines are wider. They sit at the edges of its padding box, like a scroll
+container's. With padding at least as wide as the band, the thumbs never cover
+text; with less, wrapped lines end before the thumb and the text can scroll
+past it.
+
 ### Give memory back when idle
 
 A JavaScript engine collects on allocation pressure, so after a burst of work

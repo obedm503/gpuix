@@ -488,6 +488,8 @@ impl CustomElement for TextEditorElement {
                     highlights: Vec::new(),
                     show_line_numbers: false,
                     wrap: true,
+                    thumbs: None,
+                    padding: [0.0; 3],
                     gutter_width: px(0.0),
                     undo_stack: VecDeque::new(),
                     redo_stack: Vec::new(),
@@ -497,7 +499,16 @@ impl CustomElement for TextEditorElement {
             .clone();
 
         let prop_changed = self.last_prop_value.as_ref() != Some(&self.value);
+        let thumbs = ctx
+            .style
+            .and_then(|style| crate::renderer::ThumbStyle::of(style, true, true));
+        let padding = ctx.style.map_or([0.0; 3], |style| {
+            [style.padding_top, style.padding_right, style.padding_bottom]
+                .map(|side| side.or(style.padding).unwrap_or(0.0) as f32)
+        });
         state.update(cx, |state, cx| {
+            state.thumbs = thumbs;
+            state.padding = padding;
             state.callback = callback;
             state.emits_change = emits_change;
             if state.emits_submit != emits_submit {
@@ -781,6 +792,10 @@ struct TextEditorState {
     show_line_numbers: bool,
     /// Multiline only: wrap lines at the width, or scroll sideways instead.
     wrap: bool,
+    /// Scroll thumbs, when the style names a `scrollbarColor`.
+    thumbs: Option<crate::renderer::ThumbStyle>,
+    /// Top, right and bottom padding: thumbs sit at the padded box's edges.
+    padding: [f32; 3],
     gutter_width: Pixels,
     undo_stack: VecDeque<EditSnapshot>,
     redo_stack: Vec<EditSnapshot>,
@@ -1468,8 +1483,9 @@ impl TextEditorState {
         let Some(bounds) = self.last_bounds else {
             return;
         };
-        let max_top = self.max_top(f32::from(bounds.size.height));
-        let max_left = self.max_left(f32::from(bounds.size.width));
+        let viewport_width = f32::from(bounds.size.width);
+        let max_top = self.max_top(viewport_width, f32::from(bounds.size.height));
+        let max_left = self.max_left(viewport_width, f32::from(bounds.size.height));
         if max_top == 0.0 && max_left == 0.0 {
             return;
         }
@@ -1610,16 +1626,40 @@ impl TextEditorState {
         self.multiline && self.wrap
     }
 
-    fn max_left(&self, viewport_width: f32) -> f32 {
-        if self.wraps() {
-            0.0
-        } else {
-            (self.content_width + 2.0 - viewport_width).max(0.0)
+    /// How much of a thumb's band reaches past the padding on `side` (1 is
+    /// right, 2 is bottom) into the text.
+    fn band_overlap(&self, side: usize) -> f32 {
+        match self.thumbs {
+            Some(thumbs) if self.multiline => (thumbs.footprint() - self.padding[side]).max(0.0),
+            _ => 0.0,
         }
     }
 
-    fn max_top(&self, viewport_height: f32) -> f32 {
-        (self.content_height - viewport_height).max(0.0)
+    /// Room to scroll past the text along one axis while the other axis
+    /// overflows by `overflow`, so its thumb never hides text.
+    fn thumb_room(&self, side: usize, overflow: f32) -> f32 {
+        if overflow > 1.0 {
+            self.band_overlap(side)
+        } else {
+            0.0
+        }
+    }
+
+    fn max_left(&self, viewport_width: f32, viewport_height: f32) -> f32 {
+        if self.wraps() {
+            return 0.0;
+        }
+        let room = self.thumb_room(1, self.content_height - viewport_height);
+        (self.content_width + 2.0 + room - viewport_width).max(0.0)
+    }
+
+    fn max_top(&self, viewport_width: f32, viewport_height: f32) -> f32 {
+        let room = if self.wraps() {
+            0.0
+        } else {
+            self.thumb_room(2, self.content_width + 2.0 - viewport_width)
+        };
+        (self.content_height + room - viewport_height).max(0.0)
     }
 
     fn clamp_scroll(&mut self, viewport_width: f32, viewport_height: f32) {
@@ -1645,8 +1685,10 @@ impl TextEditorState {
         }
         self.scroll_top = self
             .scroll_top
-            .clamp(0.0, self.max_top(viewport_height));
-        self.scroll_left = self.scroll_left.clamp(0.0, self.max_left(viewport_width));
+            .clamp(0.0, self.max_top(viewport_width, viewport_height));
+        self.scroll_left = self
+            .scroll_left
+            .clamp(0.0, self.max_left(viewport_width, viewport_height));
     }
 }
 
@@ -1903,6 +1945,28 @@ struct EditorPrepaint {
     caret: Option<PaintQuad>,
     selection: Vec<PaintQuad>,
     text_bounds: Bounds<Pixels>,
+    scrollbars: Option<crate::renderer::PreparedScrollbars>,
+}
+
+/// Lets a thumb drag scroll the editor's text.
+struct EditorScroll(Entity<TextEditorState>);
+
+impl crate::renderer::ScrollTarget for EditorScroll {
+    fn scroll_to(&self, vertical: bool, progress: f32, _: &mut Window, cx: &mut App) {
+        self.0.update(cx, |input, cx| {
+            let Some(bounds) = input.last_bounds else {
+                return;
+            };
+            let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+            if vertical {
+                input.scroll_top = progress * input.max_top(width, height);
+            } else {
+                input.scroll_left = progress * input.max_left(width, height);
+            }
+            input.follow_cursor = false;
+            cx.notify();
+        });
+    }
 }
 
 impl gpui::Element for EditorTextElement {
@@ -1937,8 +2001,17 @@ impl gpui::Element for EditorTextElement {
             });
             let (content_height, line_height) = input.update(cx, |input, _| {
                 let gutter = input.measure_gutter(&text_style, window);
-                let content_height =
-                    input.layout_text((width - gutter).max(px(1.0)), &text_style, window);
+                // Wrapped lines end before the vertical thumb rather than under it.
+                let thumb = if input.wraps() {
+                    px(input.band_overlap(1))
+                } else {
+                    px(0.0)
+                };
+                let content_height = input.layout_text(
+                    (width - gutter - thumb).max(px(1.0)),
+                    &text_style,
+                    window,
+                );
                 (content_height, f32::from(input.line_height))
             });
             let height =
@@ -1954,7 +2027,7 @@ impl gpui::Element for EditorTextElement {
         _: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut (),
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> EditorPrepaint {
         let full_bounds = bounds;
@@ -2025,10 +2098,27 @@ impl gpui::Element for EditorTextElement {
                 ));
             }
         }
+        let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+        let scrollbars = input.thumbs.filter(|_| input.multiline).map(|thumbs| {
+            (
+                point(px(input.max_left(width, height)), px(input.max_top(width, height))),
+                point(px(-input.scroll_left), px(-input.scroll_top)),
+                thumbs,
+            )
+        });
+        let [top, right, bottom] = input.padding.map(px);
+        let area = Bounds::from_corners(
+            point(bounds.left(), bounds.top() - top),
+            point(bounds.right() + right, bounds.bottom() + bottom),
+        );
+        let scrollbars = scrollbars.map(|(max, offset, thumbs)| {
+            crate::renderer::prepaint_scrollbars(window, area.origin, area.size, max, offset, thumbs)
+        });
         EditorPrepaint {
             caret,
             selection,
             text_bounds: bounds,
+            scrollbars,
         }
     }
 
@@ -2136,6 +2226,16 @@ impl gpui::Element for EditorTextElement {
                 }
             }
         });
+        // Outside the text's clip: thumbs sit in the padding around it.
+        if let Some(scrollbars) = prepaint.scrollbars.take() {
+            let key = self.input.read(cx).element_id;
+            crate::renderer::paint_scrollbars(
+                window,
+                scrollbars,
+                key,
+                std::rc::Rc::new(EditorScroll(self.input.clone())),
+            );
+        }
     }
 }
 

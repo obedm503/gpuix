@@ -6000,9 +6000,9 @@ fn scrollbar_thumb(track: f32, max_scroll: f32, offset: f32) -> Option<(f32, f32
 
 /// What a scroller asks its thumbs to look like, and along which axes it has any.
 #[derive(Clone, Copy)]
-struct ThumbStyle {
+pub(crate) struct ThumbStyle {
     color: gpui::Hsla,
-    thickness: f32,
+    pub(crate) thickness: f32,
     horizontal: bool,
     vertical: bool,
 }
@@ -6010,12 +6010,12 @@ struct ThumbStyle {
 impl ThumbStyle {
     /// The band along an edge that a thumb takes up, gaps included. It is
     /// also the thumb's grab area.
-    fn footprint(&self) -> f32 {
+    pub(crate) fn footprint(&self) -> f32 {
         self.thickness + 2.0 * SCROLLBAR_INSET
     }
 
     /// `None` unless the style names a `scrollbarColor` that parses.
-    fn of(style: &StyleDesc, horizontal: bool, vertical: bool) -> Option<Self> {
+    pub(crate) fn of(style: &StyleDesc, horizontal: bool, vertical: bool) -> Option<Self> {
         let color = style
             .scrollbar_color
             .as_deref()
@@ -6033,7 +6033,7 @@ impl ThumbStyle {
 const SCROLLBAR_INSET: f32 = 3.0;
 
 /// Something a thumb drag scrolls. `progress` runs from 0 (start) to 1 (end).
-trait ScrollTarget {
+pub(crate) trait ScrollTarget {
     fn scroll_to(&self, vertical: bool, progress: f32, window: &mut gpui::Window, cx: &mut gpui::App);
     fn drag_changed(&self, _dragging: bool) {}
 }
@@ -6113,7 +6113,7 @@ impl PreparedThumb {
 }
 
 /// A viewport's thumbs, placed and given grab areas during prepaint.
-struct PreparedScrollbars {
+pub(crate) struct PreparedScrollbars {
     thumbs: ThumbStyle,
     parts: Vec<PreparedThumb>,
 }
@@ -6121,7 +6121,7 @@ struct PreparedScrollbars {
 /// Places the thumbs of a viewport at `origin` with `size`. `max` is how far
 /// its content can move and `offset` how far it has (zero or negative). Must
 /// run during prepaint: each thumb gets a hitbox along its edge.
-fn prepaint_scrollbars(
+pub(crate) fn prepaint_scrollbars(
     window: &mut gpui::Window,
     origin: gpui::Point<gpui::Pixels>,
     size: gpui::Size<gpui::Pixels>,
@@ -6188,7 +6188,7 @@ fn prepaint_scrollbars(
 /// Paints prepared thumbs and lets the pointer drag them. Pressing a thumb
 /// grabs it where it was pressed; pressing its track moves the thumb's middle
 /// there and grabs it. `key` names the scroller across frames.
-fn paint_scrollbars(
+pub(crate) fn paint_scrollbars(
     window: &mut gpui::Window,
     prepared: PreparedScrollbars,
     key: u64,
