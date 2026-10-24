@@ -41,6 +41,10 @@ actions!(
         SelectRight,
         SelectUp,
         SelectDown,
+        PageUp,
+        PageDown,
+        SelectPageUp,
+        SelectPageDown,
         SelectAll,
         Home,
         End,
@@ -297,6 +301,10 @@ fn text_editor_bindings(
             KeyBinding::new("down", Down, context),
             KeyBinding::new("shift-up", SelectUp, context),
             KeyBinding::new("shift-down", SelectDown, context),
+            KeyBinding::new("pageup", PageUp, context),
+            KeyBinding::new("pagedown", PageDown, context),
+            KeyBinding::new("shift-pageup", SelectPageUp, context),
+            KeyBinding::new("shift-pagedown", SelectPageDown, context),
         ]);
     }
 
@@ -1099,6 +1107,41 @@ impl TextEditorState {
         }
     }
 
+    fn page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.page(-1.0, false, cx);
+    }
+
+    fn page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.page(1.0, false, cx);
+    }
+
+    fn select_page_up(&mut self, _: &SelectPageUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.page(-1.0, true, cx);
+    }
+
+    fn select_page_down(&mut self, _: &SelectPageDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.page(1.0, true, cx);
+    }
+
+    /// Moves the caret a viewport's worth of lines and scrolls by the same
+    /// amount, so it keeps its place on screen.
+    fn page(&mut self, direction: f32, select: bool, cx: &mut Context<Self>) {
+        let line = f32::from(self.line_height).max(1.0);
+        let viewport = self
+            .last_bounds
+            .map_or(line, |bounds| f32::from(bounds.size.height));
+        let lines = (viewport / line).floor().max(1.0);
+        let Some(offset) = self.vertical_target(direction * lines) else {
+            return;
+        };
+        if select {
+            self.select_to(offset, cx);
+        } else {
+            self.move_to(offset, cx);
+        }
+        self.scroll_top += direction * lines * line;
+    }
+
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.previous_boundary(self.cursor_offset()), cx);
     }
@@ -1891,6 +1934,10 @@ impl gpui::Render for TextEditorState {
             .on_action(cx.listener(Self::select_right))
             .on_action(cx.listener(Self::select_up))
             .on_action(cx.listener(Self::select_down))
+            .on_action(cx.listener(Self::page_up))
+            .on_action(cx.listener(Self::page_down))
+            .on_action(cx.listener(Self::select_page_up))
+            .on_action(cx.listener(Self::select_page_down))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
