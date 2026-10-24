@@ -3546,7 +3546,7 @@ order given. Its fields are `offsetX`, `offsetY`, `blurRadius`, `spreadRadius`,
 
 **Overflow:** `overflow`, `overflowX`, `overflowY` — `"hidden"` clips content, `"scroll"` creates a native scrollable container with persistent scroll state
 
-**Text:** `fontSize`, `fontFamily`, `fontWeight`, `textAlign`, `lineHeight`, `whiteSpace`, `textOverflow`, `lineClamp`, `textDecoration` (`"underline"` | `"line-through"` | `"none"`)
+**Text:** `fontSize`, `fontFamily`, `fontWeight`, `fontStyle` (`"italic"` | `"normal"`), `textAlign`, `lineHeight`, `whiteSpace`, `textOverflow`, `lineClamp`, `textDecoration` (`"underline"` | `"line-through"` | `"none"`)
 
 **Selection:** `userSelect` (`"text"` | `"none"`), `selectionColor` — both inherit down the tree
 

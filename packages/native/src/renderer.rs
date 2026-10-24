@@ -6538,6 +6538,11 @@ pub(crate) fn apply_styles<E: gpui::Styled>(mut el: E, style: &StyleDesc) -> E {
     if let Some(ref weight) = style.font_weight {
         el = el.font_weight(parse_font_weight(weight));
     }
+    match style.font_style.as_deref() {
+        Some("italic") => el = el.italic(),
+        Some("normal") => el = el.not_italic(),
+        _ => {}
+    }
     // `textAlign` was in the style type but implemented nowhere.
     match style.text_align.as_deref() {
         Some("center") => el = el.text_center(),

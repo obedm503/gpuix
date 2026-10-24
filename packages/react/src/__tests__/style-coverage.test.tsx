@@ -457,6 +457,18 @@ describe("style props reach the renderer", () => {
     )
   })
 
+  it("applies fontStyle italic", () => {
+    comparePixels(
+      "font-style-italic",
+      <div style={{ display: "flex", backgroundColor: "#101010", height: "100%" }}>
+        <text style={{ fontSize: 20, color: "#ffffff" }}>slant me</text>
+      </div>,
+      <div style={{ display: "flex", backgroundColor: "#101010", height: "100%" }}>
+        <text style={{ fontSize: 20, color: "#ffffff", fontStyle: "italic" }}>slant me</text>
+      </div>
+    )
+  })
+
   it("applies padding on an <input>", () => {
     // Padding on an input should inset the text from the edges.
     comparePixels(

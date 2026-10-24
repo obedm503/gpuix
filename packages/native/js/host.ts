@@ -195,6 +195,7 @@ export interface StyleDesc {
   fontSize?: number
   fontFamily?: string
   fontWeight?: string | number
+  fontStyle?: "normal" | "italic"
   textAlign?: string
   lineHeight?: number
   whiteSpace?: "normal" | "nowrap"

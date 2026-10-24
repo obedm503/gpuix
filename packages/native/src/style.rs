@@ -232,6 +232,7 @@ pub struct StyleDesc {
     pub font_size: Option<f64>,
     pub font_family: Option<String>,
     pub font_weight: Option<FontWeightValue>,
+    pub font_style: Option<String>,
     pub text_align: Option<String>,
     pub line_height: Option<f64>,
     pub white_space: Option<String>,
@@ -505,5 +506,14 @@ mod tests {
 
         let style: StyleDesc = serde_json::from_str(r#"{"textDecoration":"none"}"#).unwrap();
         assert_eq!(style.text_decoration.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn deserializes_font_style() {
+        let style: StyleDesc = serde_json::from_str(r#"{"fontStyle":"italic"}"#).unwrap();
+        assert_eq!(style.font_style.as_deref(), Some("italic"));
+
+        let style: StyleDesc = serde_json::from_str(r#"{"fontStyle":"normal"}"#).unwrap();
+        assert_eq!(style.font_style.as_deref(), Some("normal"));
     }
 }
