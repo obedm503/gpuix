@@ -1968,14 +1968,21 @@ more to show:
 as the viewport is of the content (never under 20px), fully rounded, and sits
 on the right edge, or the bottom for sideways scrolling, leaving the corner free
 when both show. It is painted from the scroll offset in the frame the content
-moves, so a wheel tick costs nothing beyond that frame. It is a drawing, not a
-control: it takes no pointer input, so it cannot be dragged. It applies to
+moves, so a wheel tick costs nothing beyond that frame. It applies to
 `overflow: 'scroll'` containers and to `<virtual-list>`. A list's thumb comes
 from the heights the list has measured (and `estimatedItemHeight` for rows it has
 not reached), the same totals it scrolls by, so it only runs along the right edge
 and its length settles as rows are measured. `padding` on a `<virtual-list>` insets
 its rows on all four sides, and the thumb stays at the list's own edge, past the
 padding, where a browser puts a padded scroller's scrollbar.
+
+The thumb can be dragged, like a browser's. Pressing it grabs it where it was
+pressed; pressing beside it in its track moves its middle there and grabs it.
+Its grab area is a strip along the edge at least 10px wide. The thumb darkens
+while hovered or held, shows an arrow cursor, and keeps the press from reaching
+the content under it. A drag moves the same scroll offset the wheel does, so
+`onScrollChange` reports it, and a `<virtual-list>` holds its measured length
+still until the drag ends.
 
 ### Give memory back when idle
 
