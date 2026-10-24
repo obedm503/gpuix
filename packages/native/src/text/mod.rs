@@ -8,6 +8,7 @@
 //! order. Adding a new text-painting element means calling that helper, never
 //! `div().child(string)`.
 
+pub mod highlights;
 pub mod paint;
 pub mod runs;
 pub mod search;

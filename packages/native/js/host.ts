@@ -360,6 +360,19 @@ export interface GpuixTheme {
   metrics?: GpuixMetrics
 }
 
+/** One `textHighlights` entry. */
+export interface TextHighlight {
+  /** `[start, end)` in UTF-16 code units of the element's text. */
+  start: number
+  end: number
+  color?: string
+  backgroundColor?: string
+  fontFamily?: string
+  fontWeight?: string | number
+  fontStyle?: "normal" | "italic"
+  textDecoration?: "underline" | "line-through"
+}
+
 /** One `highlight` entry. See `HostProps.highlight`. */
 export interface HighlightSpec {
   /**
@@ -484,6 +497,13 @@ export interface HostProps {
    * `highlight` replaces an ancestor's for its own subtree.
    */
   highlight?: HighlightSpec | HighlightSpec[] | null
+
+  /**
+   * Styled ranges layered over this element's text style. Works on `<text>`,
+   * `<div>` text, `<input>` and `<textarea>`; on editors, ranges are for the
+   * current `value`.
+   */
+  textHighlights?: TextHighlight[] | null
 
   // ── Focus props ────────────────────────────────────────────────
   /** Take keyboard focus when the element first mounts. Required for `<input>`:

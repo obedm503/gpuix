@@ -469,6 +469,23 @@ describe("style props reach the renderer", () => {
     )
   })
 
+  it("applies textHighlights to a range of a <text>", () => {
+    comparePixels(
+      "text-highlights",
+      <div style={{ display: "flex", backgroundColor: "#101010", height: "100%" }}>
+        <text style={{ fontSize: 20, color: "#ffffff" }}>colour me</text>
+      </div>,
+      <div style={{ display: "flex", backgroundColor: "#101010", height: "100%" }}>
+        <text
+          style={{ fontSize: 20, color: "#ffffff" }}
+          textHighlights={[{ start: 0, end: 6, color: "#ff0000", fontWeight: 700 }]}
+        >
+          colour me
+        </text>
+      </div>
+    )
+  })
+
   it("applies padding on an <input>", () => {
     // Padding on an input should inset the text from the edges.
     comparePixels(

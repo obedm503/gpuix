@@ -2921,6 +2921,52 @@ assert the geometry without a screenshot. Zed's own editor paints search
 highlights manually for the same reason.
 </details>
 
+## Styled text ranges
+
+The **`textHighlights` prop** styles ranges of an element's own text: syntax
+colours in an editor, or bold, italic and code inside one paragraph. It is
+GPUI's `StyledText::with_highlights`: each range layers its fields over the
+element's text style, so text outside the ranges keeps inheriting font, size and
+colour from `style` and its ancestors.
+
+```tsx
+<text
+  style={{ fontSize: 13 }}
+  textHighlights={[
+    { start: 4, end: 9, fontWeight: 700 },
+    { start: 16, end: 19, fontStyle: 'italic', color: '#61afef' },
+    { start: 20, end: 25, backgroundColor: '#ffffff1a' },
+  ]}
+>
+  the quick brown fox jumps
+</text>
+```
+
+Each entry is `{ start, end }` in UTF-16 code units, the units of `indexOf`,
+`highlight.ranges` and most syntax highlighters, plus any of `color`,
+`backgroundColor`, `fontFamily`, `fontWeight`, `fontStyle` and `textDecoration`
+(`"underline"` | `"line-through"`). `fontFamily` goes through GPUI's
+`StyledText::with_font_family_overrides`, since `HighlightStyle` has no family. Overlapping entries are trimmed to start
+where the previous one ended; empty and out-of-range entries are ignored.
+
+It applies to `<text>` and `<div>` text content, `<input>` and `<textarea>`. On
+an editor, compute the ranges for the current `value`. The editor owns its text
+and reports edits through `onChange` before your next render, so ranges that
+arrive for an older value are moved through the edits made since, and the ranges
+already shown move with each keystroke. Colours stay on the text they cover
+while typing; edited text is unstyled until the next update.
+
+```tsx
+<textarea
+  value={source}
+  textHighlights={tokensFor(source)}
+  onChange={(event) => setSource(event.value ?? '')}
+/>
+```
+
+Unlike `highlight`, which paints a find wash with rounded corners behind
+matches, `textHighlights` changes the glyphs themselves.
+
 ## Native text components
 
 Three elements render text with Syntect syntax highlighting computed in

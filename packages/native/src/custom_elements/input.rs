@@ -25,6 +25,7 @@ use web_time::Instant;
 
 use super::{CustomElement, CustomElementFactory, CustomRenderContext};
 use crate::renderer::{emit_event_full, emit_key_event, EventCallback};
+use crate::text::highlights::{self, TextHighlights};
 use crate::theme::Theme;
 
 actions!(
@@ -147,6 +148,67 @@ fn utf16_offset_to_utf8(text: &str, offset: usize) -> usize {
         utf8_offset += character.len_utf8();
     }
     utf8_offset
+}
+
+/// Layers highlights over `base` as `StyledText::compute_runs` does, then the
+/// IME underline. Highlights that no longer fit the text are skipped.
+fn editor_runs(
+    text: &str,
+    base: &TextStyle,
+    highlights: &TextHighlights,
+    marked: Option<&Range<usize>>,
+) -> Vec<TextRun> {
+    let len = text.len();
+    let fits = |range: &Range<usize>| {
+        range.start < range.end
+            && range.end <= len
+            && text.is_char_boundary(range.start)
+            && text.is_char_boundary(range.end)
+    };
+    let mut cuts = vec![0, len];
+    for (range, _) in highlights.iter().filter(|(range, _)| fits(range)) {
+        cuts.extend([range.start, range.end]);
+    }
+    if let Some(marked) = marked.filter(|marked| marked.end <= len) {
+        cuts.extend([marked.start, marked.end]);
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+
+    // Highlights are sorted and disjoint, so one cursor walks them with the cuts.
+    let mut next = 0;
+    let mut runs = Vec::with_capacity(cuts.len());
+    for window in cuts.windows(2) {
+        let (start, end) = (window[0], window[1]);
+        while highlights
+            .get(next)
+            .is_some_and(|(range, _)| range.end <= start)
+        {
+            next += 1;
+        }
+        let covering = highlights
+            .get(next)
+            .filter(|(range, _)| fits(range) && range.start <= start && end <= range.end);
+        let mut run = match covering {
+            Some((_, highlight)) => {
+                let mut run = base.clone().highlight(highlight.style).to_run(end - start);
+                if let Some(family) = &highlight.font_family {
+                    run.font.family = family.clone();
+                }
+                run
+            }
+            None => base.to_run(end - start),
+        };
+        if marked.is_some_and(|marked| marked.start <= start && end <= marked.end) {
+            run.underline = Some(UnderlineStyle {
+                color: Some(run.color),
+                thickness: px(1.0),
+                wavy: false,
+            });
+        }
+        runs.push(run);
+    }
+    runs
 }
 
 fn single_line_text(text: &str) -> String {
@@ -324,6 +386,8 @@ struct TextEditorElement {
     min_rows: usize,
     max_rows: usize,
     last_prop_value: Option<String>,
+    highlights: Option<serde_json::Value>,
+    last_highlights: Option<serde_json::Value>,
     theme: Theme,
     state: Option<Entity<TextEditorState>>,
 }
@@ -338,6 +402,8 @@ impl TextEditorElement {
             min_rows: 1,
             max_rows: if multiline { 10 } else { 1 },
             last_prop_value: None,
+            highlights: None,
+            last_highlights: None,
             theme: Theme::dark(),
             state: None,
         }
@@ -411,6 +477,7 @@ impl CustomElement for TextEditorElement {
                     blink_anchor: cx.background_executor().now(),
                     blink_task: None,
                     pending_values: VecDeque::new(),
+                    highlights: Vec::new(),
                     undo_stack: VecDeque::new(),
                     redo_stack: Vec::new(),
                     last_edit: None,
@@ -439,8 +506,12 @@ impl CustomElement for TextEditorElement {
             if prop_changed {
                 state.sync_prop_value(self.value.clone(), cx);
             }
+            if prop_changed || self.highlights != self.last_highlights {
+                state.set_highlights(&self.value, self.highlights.as_ref(), cx);
+            }
         });
         self.last_prop_value = Some(self.value.clone());
+        self.last_highlights = self.highlights.clone();
 
         let element_id = gpui::SharedString::from(format!("__gpuix_editor_{}", ctx.id));
         let mut editor = div()
@@ -537,6 +608,7 @@ impl CustomElement for TextEditorElement {
                     as usize
             }
             "theme" => self.theme = Theme::from_prop(Some(&value)),
+            "textHighlights" => self.highlights = (!value.is_null()).then_some(value),
             _ => {}
         }
     }
@@ -549,6 +621,7 @@ impl CustomElement for TextEditorElement {
             "minRows",
             "maxRows",
             "theme",
+            "textHighlights",
         ]
     }
 
@@ -678,7 +751,9 @@ struct TextEditorState {
     caret_color: gpui::Hsla,
     blink_anchor: Instant,
     blink_task: Option<Task<()>>,
-    pending_values: VecDeque<String>,
+    /// Unechoed `change` values, each with its edit: `(replaced bytes, inserted len)`.
+    pending_values: VecDeque<(String, (Range<usize>, usize))>,
+    highlights: TextHighlights,
     undo_stack: VecDeque<EditSnapshot>,
     redo_stack: Vec<EditSnapshot>,
     last_edit: Option<LastEdit>,
@@ -720,7 +795,7 @@ impl TextEditorState {
         if let Some(index) = self
             .pending_values
             .iter()
-            .rposition(|pending| pending == &value)
+            .rposition(|(pending, _)| pending == &value)
         {
             self.pending_values.drain(..=index);
             return;
@@ -729,10 +804,34 @@ impl TextEditorState {
         self.set_external_text(value, cx);
     }
 
+    /// JS computed `specs` for `value`; shift them through the still-pending
+    /// local edits so they land on the current text.
+    fn set_highlights(
+        &mut self,
+        value: &str,
+        specs: Option<&serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut resolved = specs
+            .map(|specs| highlights::resolve(value, &highlights::parse_specs(specs)))
+            .unwrap_or_default();
+        for (_, (range, inserted)) in &self.pending_values {
+            highlights::shift(&mut resolved, range.clone(), *inserted);
+        }
+        self.highlights = resolved;
+        cx.notify();
+    }
+
+    fn edited(&mut self, range: &Range<usize>, inserted: usize) {
+        highlights::shift(&mut self.highlights, range.clone(), inserted);
+        self.emit_change((range.clone(), inserted));
+    }
+
     fn set_external_text(&mut self, value: String, cx: &mut Context<Self>) {
         if self.content == value {
             return;
         }
+        self.highlights.clear();
         self.content = value;
         let end = self.content.len();
         self.selected_range = end..end;
@@ -748,9 +847,9 @@ impl TextEditorState {
         cx.notify();
     }
 
-    fn emit_change(&mut self) {
+    fn emit_change(&mut self, edit: (Range<usize>, usize)) {
         if self.emits_change {
-            self.pending_values.push_back(self.content.clone());
+            self.pending_values.push_back((self.content.clone(), edit));
             while self.pending_values.len() > 32 {
                 self.pending_values.pop_front();
             }
@@ -769,6 +868,8 @@ impl TextEditorState {
     }
 
     fn restore(&mut self, snapshot: EditSnapshot, cx: &mut Context<Self>) {
+        let replaced = 0..self.content.len();
+        let inserted = snapshot.content.len();
         self.content = snapshot.content;
         self.selected_range = snapshot.selected_range;
         self.selection_reversed = snapshot.selection_reversed;
@@ -776,7 +877,7 @@ impl TextEditorState {
         self.follow_cursor = true;
         self.last_edit = None;
         self.reset_blink(cx);
-        self.emit_change();
+        self.edited(&replaced, inserted);
         cx.notify();
     }
 
@@ -1405,33 +1506,22 @@ impl TextEditorState {
         // `window.line_height()` is always 16×φ. Use the style captured during
         // request_layout instead.
         self.line_height = style.line_height_in_pixels(rem_size);
-        let color = if is_placeholder {
-            gpui::rgba(0x8f8f8fff).into()
+        let mut base = style.clone();
+        base.background_color = None;
+        base.underline = None;
+        base.strikethrough = None;
+        if is_placeholder {
+            base.color = gpui::rgba(0x8f8f8fff).into();
+        }
+        let runs = if is_placeholder {
+            vec![base.to_run(display.len())]
         } else {
-            style.color
-        };
-        let run = |len: usize, underline: bool| TextRun {
-            len,
-            font: style.font(),
-            color,
-            background_color: None,
-            underline: underline.then_some(UnderlineStyle {
-                color: Some(color),
-                thickness: px(1.0),
-                wavy: false,
-            }),
-            strikethrough: None,
-        };
-        let runs = match self.marked_range.as_ref() {
-            Some(marked) if !is_placeholder => vec![
-                run(marked.start, false),
-                run(marked.len(), true),
-                run(display.len() - marked.end, false),
-            ]
-            .into_iter()
-            .filter(|run| run.len > 0)
-            .collect(),
-            _ => vec![run(display.len(), false)],
+            editor_runs(
+                &display,
+                &base,
+                &self.highlights,
+                self.marked_range.as_ref(),
+            )
         };
         let wrap_width = self.multiline.then_some(width);
         let lines = window
@@ -1563,7 +1653,7 @@ impl EntityInputHandler for TextEditorState {
         self.marked_range = None;
         self.follow_cursor = true;
         self.reset_blink(cx);
-        self.emit_change();
+        self.edited(&range, replacement.len());
         cx.notify();
     }
 
@@ -1607,7 +1697,7 @@ impl EntityInputHandler for TextEditorState {
             .unwrap_or_else(|| range.start + replacement.len()..range.start + replacement.len());
         self.follow_cursor = true;
         self.reset_blink(cx);
-        self.emit_change();
+        self.edited(&range, replacement.len());
         cx.notify();
     }
 

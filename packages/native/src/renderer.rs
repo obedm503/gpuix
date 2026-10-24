@@ -6263,6 +6263,15 @@ fn text_content(
     selectable_text(crate::text::SelectableText {
         group: crate::text::search::group_id(ctx.tree, element.id),
         selectable: ctx.inherited.selectable,
+        highlights: element
+            .custom_props()
+            .get("textHighlights")
+            .map(|value| {
+                crate::text::highlights::resolve(
+                    content,
+                    &crate::text::highlights::parse_specs(value),
+                )
+            }),
         highlight: ctx
             .inherited
             .highlight

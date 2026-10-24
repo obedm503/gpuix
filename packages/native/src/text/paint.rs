@@ -202,6 +202,7 @@ pub struct SelectableText {
     /// inheriting from ancestor `style` props. Pass `Some(..)` only when the
     /// element owns its own colours, as `<code>` and `<diff>` do.
     pub runs: Option<Vec<TextRun>>,
+    pub highlights: Option<super::highlights::TextHighlights>,
     pub selection: SharedSelection,
     pub wash_color: Hsla,
     /// Paints additional quads under the glyphs before the selection wash:
@@ -235,6 +236,7 @@ impl SelectableText {
             sub,
             text,
             runs,
+            highlights: None,
             selection,
             wash_color,
             extra_wash: None,
@@ -255,6 +257,7 @@ pub fn selectable_text(opts: SelectableText) -> gpui::AnyElement {
         sub,
         text,
         runs,
+        highlights,
         selection,
         wash_color,
         extra_wash,
@@ -266,9 +269,12 @@ pub fn selectable_text(opts: SelectableText) -> gpui::AnyElement {
     } = opts;
     let key = selection_key(element_id, sub);
 
-    let styled = match runs {
-        Some(runs) => StyledText::new(text.clone()).with_runs(runs),
-        None => StyledText::new(text.clone()),
+    let styled = match (runs, highlights) {
+        (Some(runs), _) => StyledText::new(text.clone()).with_runs(runs),
+        (None, Some(highlights)) if !highlights.is_empty() => {
+            super::highlights::styled_text(text.clone(), highlights)
+        }
+        (None, _) => StyledText::new(text.clone()),
     };
     let layout = styled.layout().clone();
 

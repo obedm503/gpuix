@@ -130,6 +130,7 @@ export type {
   GpuixTheme,
   HighlightMatch,
   HighlightSpec,
+  TextHighlight,
   ImgInstance,
   ImgProps,
   FocusTarget,
