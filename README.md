@@ -1911,6 +1911,11 @@ grapheme-safe deletion and mouse positioning.
 the text, in the editor's font: the caret's line in the text colour, the rest
 faded. A soft-wrapped line keeps one number, on its first row.
 
+**`wrap={false}`** on a `<textarea>` keeps each line on one row. Instead of
+wrapping at the width, the editor scrolls sideways: with a horizontal wheel or
+trackpad, `Shift` plus the wheel, or by following the caret. Text scrolled
+sideways never draws over the line-number gutter.
+
 `Enter` inserts a newline in a `<textarea>`. Pass **`onSubmit`** to emit that
 event on Enter instead; `Shift+Enter` still inserts a newline. An `<input>`
 always emits `onSubmit` on Enter. The editor updates natively first, then

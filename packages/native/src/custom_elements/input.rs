@@ -393,6 +393,7 @@ struct TextEditorElement {
     highlights: Option<serde_json::Value>,
     last_highlights: Option<serde_json::Value>,
     show_line_numbers: bool,
+    wrap: bool,
     theme: Theme,
     state: Option<Entity<TextEditorState>>,
 }
@@ -410,6 +411,7 @@ impl TextEditorElement {
             highlights: None,
             last_highlights: None,
             show_line_numbers: false,
+            wrap: true,
             theme: Theme::dark(),
             state: None,
         }
@@ -485,6 +487,7 @@ impl CustomElement for TextEditorElement {
                     pending_values: VecDeque::new(),
                     highlights: Vec::new(),
                     show_line_numbers: false,
+                    wrap: true,
                     gutter_width: px(0.0),
                     undo_stack: VecDeque::new(),
                     redo_stack: Vec::new(),
@@ -504,6 +507,10 @@ impl CustomElement for TextEditorElement {
             let show_line_numbers = self.show_line_numbers && self.multiline;
             if state.show_line_numbers != show_line_numbers {
                 state.show_line_numbers = show_line_numbers;
+                cx.notify();
+            }
+            if state.wrap != self.wrap {
+                state.wrap = self.wrap;
                 cx.notify();
             }
             state.emits_key_down = emits_key_down;
@@ -623,6 +630,7 @@ impl CustomElement for TextEditorElement {
             "theme" => self.theme = Theme::from_prop(Some(&value)),
             "textHighlights" => self.highlights = (!value.is_null()).then_some(value),
             "showLineNumbers" => self.show_line_numbers = value.as_bool().unwrap_or(false),
+            "wrap" => self.wrap = value.as_bool().unwrap_or(true),
             _ => {}
         }
     }
@@ -637,6 +645,7 @@ impl CustomElement for TextEditorElement {
             "theme",
             "textHighlights",
             "showLineNumbers",
+            "wrap",
         ]
     }
 
@@ -770,6 +779,8 @@ struct TextEditorState {
     pending_values: VecDeque<(String, (Range<usize>, usize))>,
     highlights: TextHighlights,
     show_line_numbers: bool,
+    /// Multiline only: wrap lines at the width, or scroll sideways instead.
+    wrap: bool,
     gutter_width: Pixels,
     undo_stack: VecDeque<EditSnapshot>,
     redo_stack: Vec<EditSnapshot>,
@@ -1457,20 +1468,26 @@ impl TextEditorState {
         let Some(bounds) = self.last_bounds else {
             return;
         };
-        let viewport_height = f32::from(bounds.size.height);
-        let max_scroll = (self.content_height - viewport_height).max(0.0);
-        if max_scroll == 0.0 {
+        let max_top = self.max_top(f32::from(bounds.size.height));
+        let max_left = self.max_left(f32::from(bounds.size.width));
+        if max_top == 0.0 && max_left == 0.0 {
             return;
         }
-        let delta = f32::from(event.delta.pixel_delta(self.line_height).y);
-        let next = (self.scroll_top - delta).clamp(0.0, max_scroll);
-        if next == self.scroll_top {
-            if delta != 0.0 {
+        let mut delta = event.delta.pixel_delta(self.line_height);
+        if event.modifiers.shift && delta.x == px(0.0) {
+            delta = point(delta.y, px(0.0));
+        }
+        let (dx, dy) = (f32::from(delta.x), f32::from(delta.y));
+        let top = (self.scroll_top - dy).clamp(0.0, max_top);
+        let left = (self.scroll_left - dx).clamp(0.0, max_left);
+        if top == self.scroll_top && left == self.scroll_left {
+            if dx != 0.0 || dy != 0.0 {
                 cx.stop_propagation();
             }
             return;
         }
-        self.scroll_top = next;
+        self.scroll_top = top;
+        self.scroll_left = left;
         self.follow_cursor = false;
         cx.stop_propagation();
         cx.notify();
@@ -1559,7 +1576,7 @@ impl TextEditorState {
                 self.marked_range.as_ref(),
             )
         };
-        let wrap_width = self.multiline.then_some(width);
+        let wrap_width = self.wraps().then_some(width);
         let lines = window
             .text_system()
             .shape_text(display, font_size, &runs, wrap_width, None)
@@ -1589,6 +1606,22 @@ impl TextEditorState {
         self.content_height
     }
 
+    fn wraps(&self) -> bool {
+        self.multiline && self.wrap
+    }
+
+    fn max_left(&self, viewport_width: f32) -> f32 {
+        if self.wraps() {
+            0.0
+        } else {
+            (self.content_width + 2.0 - viewport_width).max(0.0)
+        }
+    }
+
+    fn max_top(&self, viewport_height: f32) -> f32 {
+        (self.content_height - viewport_height).max(0.0)
+    }
+
     fn clamp_scroll(&mut self, viewport_width: f32, viewport_height: f32) {
         if self.follow_cursor {
             if let Some(cursor) = self.point_for_index(self.cursor_offset()) {
@@ -1600,7 +1633,7 @@ impl TextEditorState {
                 {
                     self.scroll_top = cursor_top + f32::from(self.line_height) - viewport_height;
                 }
-                if !self.multiline {
+                if !self.wraps() {
                     let cursor_left = f32::from(cursor.x);
                     if cursor_left < self.scroll_left {
                         self.scroll_left = cursor_left;
@@ -1612,13 +1645,8 @@ impl TextEditorState {
         }
         self.scroll_top = self
             .scroll_top
-            .clamp(0.0, (self.content_height - viewport_height).max(0.0));
-        self.scroll_left = if self.multiline {
-            0.0
-        } else {
-            self.scroll_left
-                .clamp(0.0, (self.content_width + 2.0 - viewport_width).max(0.0))
-        };
+            .clamp(0.0, self.max_top(viewport_height));
+        self.scroll_left = self.scroll_left.clamp(0.0, self.max_left(viewport_width));
     }
 }
 
@@ -2079,15 +2107,23 @@ impl gpui::Element for EditorTextElement {
                         )
                         .ok();
                 }
-                line.paint(
-                    point(text_bounds.left() - px(scroll_left), y),
-                    line_height,
-                    gpui::TextAlign::Left,
-                    Some(text_bounds),
-                    window,
-                    cx,
-                )
-                .ok();
+                // Scrolled sideways, a line would otherwise draw over the gutter.
+                window.with_content_mask(
+                    Some(gpui::ContentMask {
+                        bounds: text_bounds,
+                    }),
+                    |window| {
+                        line.paint(
+                            point(text_bounds.left() - px(scroll_left), y),
+                            line_height,
+                            gpui::TextAlign::Left,
+                            Some(text_bounds),
+                            window,
+                            cx,
+                        )
+                        .ok();
+                    },
+                );
                 y += height;
             }
             self.input.update(cx, |input, _| input.last_lines = lines);
