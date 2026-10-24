@@ -4101,6 +4101,7 @@ impl GpuixView {
             .text_system()
             .add_fonts(vec![std::borrow::Cow::Owned(bytes)])
             .map_err(|error| error.to_string())?;
+        crate::text::fonts_changed();
         cx.notify();
         window.refresh();
         Ok(())

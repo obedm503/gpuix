@@ -14,6 +14,20 @@ pub mod runs;
 pub mod search;
 pub mod selection;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static FONT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Counts `registerFont` calls. Text shaped before a font arrived may shape
+/// differently after, so layout caches include this in their key.
+pub fn font_generation() -> u64 {
+    FONT_GENERATION.load(Ordering::Relaxed)
+}
+
+pub(crate) fn fonts_changed() {
+    FONT_GENERATION.fetch_add(1, Ordering::Relaxed);
+}
+
 pub use paint::{
     chrome_text, log_painted_text, painted_highlights, painted_text, range_rects,
     record_start_region, selectable_text, selection_frame_reset, selection_key, HighlightSource,

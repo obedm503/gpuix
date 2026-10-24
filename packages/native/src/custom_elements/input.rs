@@ -10,6 +10,7 @@
 
 use std::collections::VecDeque;
 use std::ops::Range;
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
@@ -80,6 +81,8 @@ const CARET_WIDTH: Pixels = px(2.0);
 const DRAG_SCROLL_FRAME_MS: u64 = 16;
 const UNDO_COALESCE: Duration = Duration::from_millis(700);
 const UNDO_LIMIT: usize = 200;
+/// Layouts kept per editor: one for each width taffy measures it at in a frame.
+const LAYOUT_CACHE_SIZE: usize = 4;
 const GUTTER_GAP: Pixels = px(12.0);
 const GUTTER_INSET: Pixels = px(4.0);
 /// So the text does not shift when the document passes nine lines.
@@ -491,7 +494,7 @@ impl CustomElement for TextEditorElement {
                     scroll_top: 0.0,
                     scroll_left: 0.0,
                     follow_cursor: true,
-                    last_lines: Vec::new(),
+                    last_lines: Rc::new(Vec::new()),
                     line_starts: vec![0],
                     last_bounds: None,
                     line_height: px(20.0),
@@ -499,6 +502,7 @@ impl CustomElement for TextEditorElement {
                     content_height: 20.0,
                     content_width: 0.0,
                     display_is_placeholder: false,
+                    layouts: Vec::new(),
                     caret_color,
                     blink_anchor: cx.background_executor().now(),
                     blink_task: None,
@@ -793,7 +797,8 @@ struct TextEditorState {
     scroll_top: f32,
     scroll_left: f32,
     follow_cursor: bool,
-    last_lines: Vec<WrappedLine>,
+    /// Shared with the cached layout it came from: `WrappedLine` is not `Clone`.
+    last_lines: Rc<Vec<WrappedLine>>,
     line_starts: Vec<usize>,
     last_bounds: Option<Bounds<Pixels>>,
     line_height: Pixels,
@@ -801,6 +806,8 @@ struct TextEditorState {
     content_height: f32,
     content_width: f32,
     display_is_placeholder: bool,
+    /// Recent layouts, newest first.
+    layouts: Vec<(LayoutInputs, TextLayout)>,
     caret_color: gpui::Hsla,
     blink_anchor: Instant,
     blink_task: Option<Task<()>>,
@@ -1616,18 +1623,55 @@ impl TextEditorState {
     }
 
     fn layout_text(&mut self, width: Pixels, style: &TextStyle, window: &mut Window) -> f32 {
+        // Taffy measures the editor at several widths a frame (its minimum, then
+        // its real width), and again every frame. Moving the caret changes none
+        // of what the layout reads, so a recent layout is reused instead of
+        // reshaping the whole text. Without wrapping the width changes nothing.
+        let inputs = LayoutInputs {
+            content: self.content.clone(),
+            placeholder: self.placeholder.clone(),
+            wrap_width: self.wraps().then_some(width),
+            style: style.clone(),
+            rem_size: window.rem_size(),
+            highlights: self.highlights.clone(),
+            marked: self.marked_range.clone(),
+            fonts: crate::text::font_generation(),
+        };
+        if let Some(index) = self.layouts.iter().position(|(cached, _)| cached == &inputs) {
+            let entry = self.layouts.remove(index);
+            self.apply_layout(&entry.1);
+            self.layouts.insert(0, entry);
+            return self.content_height;
+        }
+        let layout = self.shape_text(&inputs, window);
+        self.apply_layout(&layout);
+        self.layouts.insert(0, (inputs, layout));
+        self.layouts.truncate(LAYOUT_CACHE_SIZE);
+        self.content_height
+    }
+
+    fn apply_layout(&mut self, layout: &TextLayout) {
+        self.font_size = layout.font_size;
+        self.line_height = layout.line_height;
+        self.last_lines = layout.lines.clone();
+        self.line_starts = layout.line_starts.clone();
+        self.content_height = layout.content_height;
+        self.content_width = layout.content_width;
+        self.display_is_placeholder = layout.is_placeholder;
+    }
+
+    fn shape_text(&self, inputs: &LayoutInputs, window: &mut Window) -> TextLayout {
+        let style = &inputs.style;
         let (display, is_placeholder) = if self.content.is_empty() {
             (self.placeholder.clone(), true)
         } else {
             (SharedString::from(self.content.clone()), false)
         };
-        let rem_size = window.rem_size();
-        let font_size = style.font_size.to_pixels(rem_size);
-        self.font_size = font_size;
+        let font_size = style.font_size.to_pixels(inputs.rem_size);
         // Taffy measures after parent `with_text_style` is gone, so
         // `window.line_height()` is always 16×φ. Use the style captured during
         // request_layout instead.
-        self.line_height = style.line_height_in_pixels(rem_size);
+        let line_height = style.line_height_in_pixels(inputs.rem_size);
         let mut base = style.clone();
         base.background_color = None;
         base.underline = None;
@@ -1645,10 +1689,9 @@ impl TextEditorState {
                 self.marked_range.as_ref(),
             )
         };
-        let wrap_width = self.wraps().then_some(width);
         let lines = window
             .text_system()
-            .shape_text(display, font_size, &runs, wrap_width, None)
+            .shape_text(display, font_size, &runs, inputs.wrap_width, None)
             .map(|lines| lines.into_vec())
             .unwrap_or_default();
         let mut line_starts = Vec::with_capacity(lines.len());
@@ -1660,19 +1703,24 @@ impl TextEditorState {
         if line_starts.is_empty() {
             line_starts.push(0);
         }
-        self.content_height = lines
+        let content_height = lines
             .iter()
-            .map(|line| f32::from(line.size(self.line_height).height))
+            .map(|line| f32::from(line.size(line_height).height))
             .sum::<f32>()
-            .max(f32::from(self.line_height));
-        self.content_width = lines
+            .max(f32::from(line_height));
+        let content_width = lines
             .iter()
             .map(|line| f32::from(line.unwrapped_layout.width))
             .fold(0.0, f32::max);
-        self.display_is_placeholder = is_placeholder;
-        self.last_lines = lines;
-        self.line_starts = line_starts;
-        self.content_height
+        TextLayout {
+            lines: Rc::new(lines),
+            line_starts,
+            font_size,
+            line_height,
+            content_height,
+            content_width,
+            is_placeholder,
+        }
     }
 
     fn wraps(&self) -> bool {
@@ -2005,6 +2053,31 @@ struct EditorPrepaint {
     scrollbars: Option<crate::renderer::PreparedScrollbars>,
 }
 
+/// Everything a text layout depends on. `wrap_width` is `None` when the
+/// editor does not wrap, since then the width does not change the layout.
+#[derive(PartialEq)]
+struct LayoutInputs {
+    content: String,
+    placeholder: SharedString,
+    wrap_width: Option<Pixels>,
+    style: TextStyle,
+    rem_size: Pixels,
+    highlights: TextHighlights,
+    marked: Option<Range<usize>>,
+    fonts: u64,
+}
+
+/// The shaped lines of one layout and the measurements taken from them.
+struct TextLayout {
+    lines: Rc<Vec<WrappedLine>>,
+    line_starts: Vec<usize>,
+    font_size: Pixels,
+    line_height: Pixels,
+    content_height: f32,
+    content_width: f32,
+    is_placeholder: bool,
+}
+
 /// Lets a thumb drag scroll the editor's text.
 struct EditorScroll(Entity<TextEditorState>);
 
@@ -2213,7 +2286,7 @@ impl gpui::Element for EditorTextElement {
                         input.content.clone().into()
                     };
                     (
-                        std::mem::take(&mut input.last_lines),
+                        input.last_lines.clone(),
                         input.line_height,
                         input.scroll_top,
                         input.scroll_left,
@@ -2273,7 +2346,6 @@ impl gpui::Element for EditorTextElement {
                 );
                 y += height;
             }
-            self.input.update(cx, |input, _| input.last_lines = lines);
             let caret_shown = self
                 .input
                 .update(cx, |input, cx| input.caret_shown(window, cx));
@@ -2290,7 +2362,7 @@ impl gpui::Element for EditorTextElement {
                 window,
                 scrollbars,
                 key,
-                std::rc::Rc::new(EditorScroll(self.input.clone())),
+                Rc::new(EditorScroll(self.input.clone())),
             );
         }
     }
