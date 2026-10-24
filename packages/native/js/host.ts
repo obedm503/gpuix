@@ -547,6 +547,8 @@ export interface InputProps extends HostProps {
 export interface TextareaProps extends InputProps {
   minRows?: number
   maxRows?: number
+  /** Show line numbers in a gutter. Wrapped lines share one number. */
+  showLineNumbers?: boolean
 }
 
 export type VirtualListShared = {

@@ -76,6 +76,10 @@ const CARET_WIDTH: Pixels = px(2.0);
 const DRAG_SCROLL_FRAME_MS: u64 = 16;
 const UNDO_COALESCE: Duration = Duration::from_millis(700);
 const UNDO_LIMIT: usize = 200;
+const GUTTER_GAP: Pixels = px(12.0);
+const GUTTER_INSET: Pixels = px(4.0);
+/// So the text does not shift when the document passes nine lines.
+const GUTTER_MIN_DIGITS: usize = 2;
 
 fn caret_visible(ms_since_activity: u64) -> bool {
     (ms_since_activity / CARET_BLINK_MS) % 2 == 0
@@ -388,6 +392,7 @@ struct TextEditorElement {
     last_prop_value: Option<String>,
     highlights: Option<serde_json::Value>,
     last_highlights: Option<serde_json::Value>,
+    show_line_numbers: bool,
     theme: Theme,
     state: Option<Entity<TextEditorState>>,
 }
@@ -404,6 +409,7 @@ impl TextEditorElement {
             last_prop_value: None,
             highlights: None,
             last_highlights: None,
+            show_line_numbers: false,
             theme: Theme::dark(),
             state: None,
         }
@@ -478,6 +484,8 @@ impl CustomElement for TextEditorElement {
                     blink_task: None,
                     pending_values: VecDeque::new(),
                     highlights: Vec::new(),
+                    show_line_numbers: false,
+                    gutter_width: px(0.0),
                     undo_stack: VecDeque::new(),
                     redo_stack: Vec::new(),
                     last_edit: None,
@@ -491,6 +499,11 @@ impl CustomElement for TextEditorElement {
             state.emits_change = emits_change;
             if state.emits_submit != emits_submit {
                 state.emits_submit = emits_submit;
+                cx.notify();
+            }
+            let show_line_numbers = self.show_line_numbers && self.multiline;
+            if state.show_line_numbers != show_line_numbers {
+                state.show_line_numbers = show_line_numbers;
                 cx.notify();
             }
             state.emits_key_down = emits_key_down;
@@ -609,6 +622,7 @@ impl CustomElement for TextEditorElement {
             }
             "theme" => self.theme = Theme::from_prop(Some(&value)),
             "textHighlights" => self.highlights = (!value.is_null()).then_some(value),
+            "showLineNumbers" => self.show_line_numbers = value.as_bool().unwrap_or(false),
             _ => {}
         }
     }
@@ -622,6 +636,7 @@ impl CustomElement for TextEditorElement {
             "maxRows",
             "theme",
             "textHighlights",
+            "showLineNumbers",
         ]
     }
 
@@ -754,6 +769,8 @@ struct TextEditorState {
     /// Unechoed `change` values, each with its edit: `(replaced bytes, inserted len)`.
     pending_values: VecDeque<(String, (Range<usize>, usize))>,
     highlights: TextHighlights,
+    show_line_numbers: bool,
+    gutter_width: Pixels,
     undo_stack: VecDeque<EditSnapshot>,
     redo_stack: Vec<EditSnapshot>,
     last_edit: Option<LastEdit>,
@@ -1493,6 +1510,25 @@ impl TextEditorState {
         self.offset_from_utf16(range.start)..self.offset_from_utf16(range.end)
     }
 
+    fn measure_gutter(&mut self, style: &TextStyle, window: &mut Window) -> Pixels {
+        if !self.show_line_numbers {
+            self.gutter_width = px(0.0);
+            return self.gutter_width;
+        }
+        let lines = self.content.matches('\n').count() + 1;
+        let digits = lines.to_string().len().max(GUTTER_MIN_DIGITS);
+        let sample: SharedString = "0".repeat(digits).into();
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let shaped = window.text_system().shape_line(
+            sample.clone(),
+            font_size,
+            &[style.to_run(sample.len())],
+            None,
+        );
+        self.gutter_width = GUTTER_INSET + shaped.width + GUTTER_GAP;
+        self.gutter_width
+    }
+
     fn layout_text(&mut self, width: Pixels, style: &TextStyle, window: &mut Window) -> f32 {
         let (display, is_placeholder) = if self.content.is_empty() {
             (self.placeholder.clone(), true)
@@ -1838,6 +1874,7 @@ struct EditorTextElement {
 struct EditorPrepaint {
     caret: Option<PaintQuad>,
     selection: Vec<PaintQuad>,
+    text_bounds: Bounds<Pixels>,
 }
 
 impl gpui::Element for EditorTextElement {
@@ -1871,7 +1908,9 @@ impl gpui::Element for EditorTextElement {
                 _ => px(320.0),
             });
             let (content_height, line_height) = input.update(cx, |input, _| {
-                let content_height = input.layout_text(width, &text_style, window);
+                let gutter = input.measure_gutter(&text_style, window);
+                let content_height =
+                    input.layout_text((width - gutter).max(px(1.0)), &text_style, window);
                 (content_height, f32::from(input.line_height))
             });
             let height =
@@ -1890,6 +1929,13 @@ impl gpui::Element for EditorTextElement {
         _: &mut Window,
         cx: &mut App,
     ) -> EditorPrepaint {
+        let full_bounds = bounds;
+        // `last_bounds` excludes the gutter: pointer events are mapped against it.
+        let gutter = self.input.read(cx).gutter_width.min(full_bounds.size.width);
+        let bounds = Bounds::new(
+            point(full_bounds.left() + gutter, full_bounds.top()),
+            size(full_bounds.size.width - gutter, full_bounds.size.height),
+        );
         self.input.update(cx, |input, _| {
             input.last_bounds = Some(bounds);
             input.clamp_scroll(f32::from(bounds.size.width), f32::from(bounds.size.height));
@@ -1951,7 +1997,11 @@ impl gpui::Element for EditorTextElement {
                 ));
             }
         }
-        EditorPrepaint { caret, selection }
+        EditorPrepaint {
+            caret,
+            selection,
+            text_bounds: bounds,
+        }
     }
 
     fn paint(
@@ -1996,14 +2046,44 @@ impl gpui::Element for EditorTextElement {
                     )
                 });
             crate::text::log_painted_text(display);
-            let mut y = bounds.top() - px(scroll_top);
-            for line in &lines {
+            let text_bounds = prepaint.text_bounds;
+            let numbers = self.input.read(cx).show_line_numbers;
+            let cursor_line = {
+                let input = self.input.read(cx);
+                input.content[..input.cursor_offset().min(input.content.len())]
+                    .matches('\n')
+                    .count()
+            };
+            let text_style = window.text_style();
+            let font_size = text_style.font_size.to_pixels(window.rem_size());
+            let number_width = text_bounds.left() - bounds.left() - GUTTER_INSET - GUTTER_GAP;
+            let mut y = text_bounds.top() - px(scroll_top);
+            for (index, line) in lines.iter().enumerate() {
                 let height = line.size(line_height).height;
+                if numbers && y + height >= bounds.top() && y <= bounds.bottom() {
+                    let label: SharedString = (index + 1).to_string().into();
+                    let mut run = text_style.to_run(label.len());
+                    if index != cursor_line {
+                        run.color = run.color.opacity(0.45);
+                    }
+                    window
+                        .text_system()
+                        .shape_line(label, font_size, &[run], None)
+                        .paint(
+                            point(bounds.left() + GUTTER_INSET, y),
+                            line_height,
+                            gpui::TextAlign::Right,
+                            Some(number_width),
+                            window,
+                            cx,
+                        )
+                        .ok();
+                }
                 line.paint(
-                    point(bounds.left() - px(scroll_left), y),
+                    point(text_bounds.left() - px(scroll_left), y),
                     line_height,
                     gpui::TextAlign::Left,
-                    Some(bounds),
+                    Some(text_bounds),
                     window,
                     cx,
                 )

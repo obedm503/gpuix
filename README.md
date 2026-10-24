@@ -1907,6 +1907,10 @@ grapheme-safe deletion and mouse positioning.
 />
 ```
 
+**`showLineNumbers`** on a `<textarea>` numbers each line in a gutter left of
+the text, in the editor's font: the caret's line in the text colour, the rest
+faded. A soft-wrapped line keeps one number, on its first row.
+
 `Enter` inserts a newline in a `<textarea>`. Pass **`onSubmit`** to emit that
 event on Enter instead; `Shift+Enter` still inserts a newline. An `<input>`
 always emits `onSubmit` on Enter. The editor updates natively first, then
