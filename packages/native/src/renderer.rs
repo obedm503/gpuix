@@ -6008,6 +6008,12 @@ struct ThumbStyle {
 }
 
 impl ThumbStyle {
+    /// The band along an edge that a thumb takes up, gaps included. It is
+    /// also the thumb's grab area.
+    fn footprint(&self) -> f32 {
+        self.thickness + 2.0 * SCROLLBAR_INSET
+    }
+
     /// `None` unless the style names a `scrollbarColor` that parses.
     fn of(style: &StyleDesc, horizontal: bool, vertical: bool) -> Option<Self> {
         let color = style
@@ -6023,8 +6029,8 @@ impl ThumbStyle {
     }
 }
 
-/// How wide a thumb's grab area is, at least: a thin thumb is hard to hit.
-const SCROLLBAR_HIT: f32 = 10.0;
+/// The gap between a thumb and the edges of its viewport.
+const SCROLLBAR_INSET: f32 = 3.0;
 
 /// Something a thumb drag scrolls. `progress` runs from 0 (start) to 1 (end).
 trait ScrollTarget {
@@ -6129,21 +6135,13 @@ fn prepaint_scrollbars(
         vertical,
         ..
     } = thumbs;
+    let inset = SCROLLBAR_INSET;
+    let band = thumbs.footprint();
     let (width, height) = (f32::from(size.width), f32::from(size.height));
-    let along = |show: bool, track: f32, max_scroll: gpui::Pixels, offset: gpui::Pixels| {
-        show.then(|| scrollbar_thumb(track, f32::from(max_scroll), f32::from(offset)))
-            .flatten()
-    };
-    let mut across = along(vertical, height, max.y, offset.y);
-    let mut sideways = along(horizontal, width, max.x, offset.x);
-    let both = across.is_some() && sideways.is_some();
-    if both {
-        // Leave the corner to whichever thumb reaches it first.
-        across = along(vertical, height - thickness, max.y, offset.y);
-        sideways = along(horizontal, width - thickness, max.x, offset.x);
-    }
-    let corner = if both { thickness } else { 0.0 };
-    let hit = SCROLLBAR_HIT.max(thickness);
+    let overflows = |show: bool, max_scroll: gpui::Pixels| show && f32::from(max_scroll) > 1.0;
+    let both = overflows(vertical, max.y) && overflows(horizontal, max.x);
+    // With both thumbs, each stops short of the other's band.
+    let corner = if both { band - inset } else { 0.0 };
     // Whole pixels, so a thumb is as crisp as a browser's.
     let rect = |x: f32, y: f32, w: f32, h: f32| {
         gpui::Bounds::new(
@@ -6152,26 +6150,34 @@ fn prepaint_scrollbars(
         )
     };
     let mut parts = Vec::new();
-    if let Some((start, length)) = across {
-        let track = height - corner;
+    let track = height - 2.0 * inset - corner;
+    if let Some((start, length)) = vertical
+        .then(|| scrollbar_thumb(track, f32::from(max.y), f32::from(offset.y)))
+        .flatten()
+    {
+        let x = width - inset - thickness;
         parts.push(PreparedThumb {
             vertical: true,
-            track: rect(width - thickness, 0.0, thickness, track),
-            thumb: rect(width - thickness, start, thickness, length),
+            track: rect(x, inset, thickness, track),
+            thumb: rect(x, inset + start, thickness, length),
             hitbox: window.insert_hitbox(
-                rect(width - hit, 0.0, hit, track),
+                rect(width - band, 0.0, band, height - corner),
                 gpui::HitboxBehavior::BlockMouse,
             ),
         });
     }
-    if let Some((start, length)) = sideways {
-        let track = width - corner;
+    let track = width - 2.0 * inset - corner;
+    if let Some((start, length)) = horizontal
+        .then(|| scrollbar_thumb(track, f32::from(max.x), f32::from(offset.x)))
+        .flatten()
+    {
+        let y = height - inset - thickness;
         parts.push(PreparedThumb {
             vertical: false,
-            track: rect(0.0, height - thickness, track, thickness),
-            thumb: rect(start, height - thickness, length, thickness),
+            track: rect(inset, y, track, thickness),
+            thumb: rect(inset + start, y, length, thickness),
             hitbox: window.insert_hitbox(
-                rect(0.0, height - hit, track, hit),
+                rect(0.0, height - band, width - corner, band),
                 gpui::HitboxBehavior::BlockMouse,
             ),
         });
