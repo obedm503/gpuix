@@ -1916,6 +1916,10 @@ wrapping at the width, the editor scrolls sideways: with a horizontal wheel or
 trackpad, `Shift` plus the wheel, or by following the caret. Text scrolled
 sideways never draws over the line-number gutter.
 
+A `<textarea>` opens with the caret at the start of its text, and a new `value`
+puts it back there, so a long document opens at its first line. An `<input>`
+puts the caret at the end, ready to add to what is there.
+
 `Enter` inserts a newline in a `<textarea>`. Pass **`onSubmit`** to emit that
 event on Enter instead; `Shift+Enter` still inserts a newline. An `<input>`
 always emits `onSubmit` on Enter. The editor updates natively first, then

@@ -382,6 +382,16 @@ impl CustomElementFactory for TextareaFactory {
     }
 }
 
+/// Where the caret starts in new text: a field at its end, ready to extend
+/// it; a multiline editor at the top, so it opens at the beginning.
+fn initial_cursor(multiline: bool, value: &str) -> usize {
+    if multiline {
+        0
+    } else {
+        value.len()
+    }
+}
+
 struct TextEditorElement {
     multiline: bool,
     value: String,
@@ -447,7 +457,7 @@ impl CustomElement for TextEditorElement {
                 let caret_color = self.theme.caret;
                 let callback = callback.clone();
                 let id = ctx.id;
-                let cursor = value.len();
+                let cursor = initial_cursor(multiline, &value);
                 let state_focus_handle = focus_handle.clone();
                 cx.new(move |cx| TextEditorState {
                     element_id: id,
@@ -876,8 +886,8 @@ impl TextEditorState {
         }
         self.highlights.clear();
         self.content = value;
-        let end = self.content.len();
-        self.selected_range = end..end;
+        let cursor = initial_cursor(self.multiline, &self.content);
+        self.selected_range = cursor..cursor;
         self.selection_reversed = false;
         self.marked_range = None;
         self.scroll_top = 0.0;
