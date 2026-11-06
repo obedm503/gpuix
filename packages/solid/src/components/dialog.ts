@@ -4,6 +4,7 @@ import {
   createComponent,
   createContext,
   createSignal,
+  mergeProps,
   Show,
   splitProps,
   useContext,
@@ -16,7 +17,7 @@ import type { HostElement } from "../host.js"
 import { jsx } from "../jsx-runtime.js"
 import { useGpuixRequired } from "../root.js"
 import { buttonProps } from "./button.js"
-import { DismissableLayer, renderSlot } from "./floating.js"
+import { DismissableLayer, forwardProps, renderSlot } from "./floating.js"
 
 interface DialogState {
   open(): boolean
@@ -76,9 +77,8 @@ export function DialogTrigger(props: DialogTriggerProps): JSX.Element {
   return renderSlot({
     asChild: props.asChild,
     children: props.children,
-    props: Object.defineProperties(
+    props: forwardProps(props, ["children", "asChild"], Object.defineProperties(
       {
-        ...props,
         ref(element: HostElement) {
           state.trigger.current = element
           props.ref?.(element)
@@ -94,7 +94,7 @@ export function DialogTrigger(props: DialogTriggerProps): JSX.Element {
           state.setOpen(true)
         },
       }))
-    ),
+    )),
     defaultTabIndex: 0,
   })
 }
@@ -113,8 +113,7 @@ export function DialogPortal(props: DialogPortalProps): JSX.Element {
     get when() { return state.open() },
     keyed: true,
     get children() {
-      return jsx("anchored", {
-        ...props,
+      return jsx("anchored", forwardProps(props, [], {
         // Native sizes the layer to the viewport, so a resize never leaves an
         // uncovered strip that clicks could reach.
         fill: "window",
@@ -134,8 +133,7 @@ export function DialogPortal(props: DialogPortalProps): JSX.Element {
             pointerEvents: state.modal() ? props.style?.pointerEvents : "none",
           }
         },
-        get children() { return props.children },
-      })
+      }))
     },
   })
 }
@@ -147,8 +145,7 @@ export interface DialogBackdropProps extends HostProps {
 /** Covers the window behind the popup. A press on it closes the dialog. */
 export function DialogBackdrop(props: DialogBackdropProps): JSX.Element {
   const state = context("DialogBackdrop")
-  return jsx("div", {
-    ...props,
+  return jsx("div", forwardProps(props, [], {
     get style() {
       return { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, ...props.style }
     },
@@ -156,7 +153,7 @@ export function DialogBackdrop(props: DialogBackdropProps): JSX.Element {
       props.onMouseDown?.(event)
       if (state.pointerDismissal()) state.setOpen(false)
     },
-  })
+  }))
 }
 
 export interface DialogPopupProps extends HostProps {
@@ -184,8 +181,7 @@ export function DialogPopup(allProps: DialogPopupProps): JSX.Element {
         finalFocus: (previous) =>
           resolveFocusTarget(focus.finalFocus, () => state.trigger.current?.id ?? previous),
         get children() {
-          return jsx("div", {
-            ...props,
+          return jsx("div", forwardProps(props, [], {
             ref(element: HostElement) {
               popup = element
               props.ref?.(element)
@@ -203,7 +199,7 @@ export function DialogPopup(allProps: DialogPopupProps): JSX.Element {
               if (event.modifiers?.shift) renderer.focusPreviousWithin?.(popup.id)
               else renderer.focusNextWithin?.(popup.id)
             },
-          })
+          }))
         },
       })
     },
@@ -211,7 +207,7 @@ export function DialogPopup(allProps: DialogPopupProps): JSX.Element {
 }
 
 export function DialogTitle(props: HostProps & { children?: JSX.Element }): JSX.Element {
-  return jsx("div", { role: "heading", "aria-level": 2, ...props })
+  return jsx("div", mergeProps({ role: "heading", "aria-level": 2 }, props))
 }
 
 export function DialogDescription(props: HostProps & { children?: JSX.Element }): JSX.Element {
@@ -228,8 +224,8 @@ export function DialogClose(props: DialogCloseProps): JSX.Element {
   return renderSlot({
     asChild: props.asChild,
     children: props.children,
-    props: Object.defineProperties(
-      { ...props },
+    props: forwardProps(props, ["children", "asChild"], Object.defineProperties(
+      {},
       Object.getOwnPropertyDescriptors(buttonProps({
         get tabIndex() { return props.tabIndex },
         onKeyDown: (event) => props.onKeyDown?.(event),
@@ -239,7 +235,7 @@ export function DialogClose(props: DialogCloseProps): JSX.Element {
           state.setOpen(false)
         },
       }))
-    ),
+    )),
     defaultTabIndex: 0,
   })
 }

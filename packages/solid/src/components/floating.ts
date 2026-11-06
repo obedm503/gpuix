@@ -1,4 +1,13 @@
-import { createComponent, createContext, onCleanup, onMount, useContext, type JSX } from "solid-js"
+import {
+  createComponent,
+  createContext,
+  mergeProps,
+  onCleanup,
+  onMount,
+  splitProps,
+  useContext,
+  type JSX,
+} from "solid-js"
 import type { EventPayload } from "@gpuix/native"
 import { pushDismissLayer } from "@gpuix/native/host"
 import type { DismissLayer, HostProps, KeyEvent, StyleDesc } from "@gpuix/native/host"
@@ -79,6 +88,24 @@ export function DismissableLayer(props: DismissableLayerProps): JSX.Element {
   })
 }
 
+/**
+ * `props` without `omit`, with `overrides` on top, all read lazily.
+ *
+ * A spread (`{ ...props }`) calls every getter at once. That builds
+ * `children` a second time, and inside a tracked scope it subscribes the
+ * scope to every prop, so a change to any of them rebuilds the subtree.
+ * Keys of `overrides` are left out of `props` too, so an override getter
+ * that returns `undefined` never falls back to the caller's value.
+ */
+export function forwardProps(
+  props: object,
+  omit: readonly string[],
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  const [, rest] = splitProps(props as Record<string, unknown>, [...omit, ...Object.keys(overrides)])
+  return mergeProps(rest, overrides)
+}
+
 export function composeHandlers<Event extends EventPayload>(
   first?: (event: Event) => void,
   second?: (event: Event) => void
@@ -131,11 +158,16 @@ export function renderSlot(args: {
   for (const [key, descriptor] of Object.entries(descriptors)) {
     const own = child.props.get(key)
     if (!key.startsWith("on") || typeof own !== "function") continue
-    const slotHandler = descriptor.value
-    if (typeof slotHandler !== "function") continue
-    descriptor.value = (event: EventPayload) => {
-      own(event)
-      slotHandler(event)
+    // Forwarded props arrive as getters; read the part's handler per event.
+    const slotHandler = descriptor.get ?? (() => descriptor.value)
+    descriptors[key] = {
+      enumerable: true,
+      configurable: true,
+      value: (event: EventPayload) => {
+        own(event)
+        const handler = slotHandler()
+        if (typeof handler === "function") handler(event)
+      },
     }
   }
   // The child keeps its own children. Without skipChildren, spread would
@@ -200,34 +232,36 @@ function floatingContentStyle(style?: StyleDesc): StyleDesc | undefined {
  * content, which is the only thing that paints.
  */
 export function FloatingLayer(props: FloatingContentProps): JSX.Element {
-  const side = props.side ?? "bottom"
-  const align = props.align ?? "start"
-  const alignOffset = props.alignOffset ?? 0
-  const offset = side === "top" || side === "bottom"
-    ? { x: alignOffset, y: 0 }
-    : { x: 0, y: alignOffset }
+  const side = () => props.side ?? "bottom"
   return jsx("anchored", {
     // The content below always paints a fill, so the anchored layer declares
     // a transparent one and gets no fallback quad. A fallback rounded to the
     // same radius still shows its anti-aliased edge around each corner.
     get style() { return { ...floatingSurfaceStyle(props.style), backgroundColor: "transparent" } },
-    side,
-    align,
-    gap: props.sideOffset ?? 0,
-    offset,
+    get side() { return side() },
+    get align() { return props.align ?? "start" },
+    get gap() { return props.sideOffset ?? 0 },
+    get offset() {
+      const alignOffset = props.alignOffset ?? 0
+      return side() === "top" || side() === "bottom"
+        ? { x: alignOffset, y: 0 }
+        : { x: 0, y: alignOffset }
+    },
     fit: "snap",
-    snapMargin: props.collisionPadding ?? 8,
+    get snapMargin() { return props.collisionPadding ?? 8 },
     deferred: true,
     priority: 1,
-    occlude: props.style?.pointerEvents !== "none",
+    get occlude() { return props.style?.pointerEvents !== "none" },
     get children() {
-      return jsx("div", {
-        ...props,
-        get style() {
-          return mergeStyles({ backgroundColor: "#1A1A1A" }, floatingContentStyle(props.style))
-        },
-        get children() { return props.children },
-      })
+      return jsx("div", forwardProps(
+        props,
+        ["side", "sideOffset", "align", "alignOffset", "collisionPadding"],
+        {
+          get style() {
+            return mergeStyles({ backgroundColor: "#1A1A1A" }, floatingContentStyle(props.style))
+          },
+        }
+      ))
     },
   })
 }

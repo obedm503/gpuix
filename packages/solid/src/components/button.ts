@@ -3,7 +3,7 @@
 import { splitProps, type JSX } from "solid-js"
 import type { EventPayload } from "@gpuix/native"
 import type { HostProps, KeyEvent } from "@gpuix/native/host"
-import { renderSlot, resolveStyle, type StateStyle } from "./floating.js"
+import { forwardProps, renderSlot, resolveStyle, type StateStyle } from "./floating.js"
 
 export interface ButtonState {
   disabled: boolean
@@ -69,16 +69,13 @@ export function Button(allProps: ButtonProps): JSX.Element {
   return renderSlot({
     asChild: local.asChild,
     children: local.children,
-    props: Object.defineProperties(
-      { ...props },
-      {
-        ...Object.getOwnPropertyDescriptors(button),
-        style: {
-          enumerable: true,
-          get: () => resolveStyle(local.style, { disabled: behavior.disabled ?? false }),
-        },
-      }
-    ),
+    props: forwardProps(props, [], Object.defineProperties({}, {
+      ...Object.getOwnPropertyDescriptors(button),
+      style: {
+        enumerable: true,
+        get: () => resolveStyle(local.style, { disabled: behavior.disabled ?? false }),
+      },
+    })),
     defaultTabIndex: 0,
   })
 }

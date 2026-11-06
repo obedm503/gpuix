@@ -1,6 +1,7 @@
 import {
   createComponent,
   createContext,
+  createMemo,
   createSignal,
   onCleanup,
   onMount,
@@ -16,6 +17,7 @@ import { useGpuixRequired } from "../root.js"
 import {
   FloatingLayer,
   floatingRootStyle,
+  forwardProps,
   renderSlot,
   resolveStyle,
   type FloatingContentProps,
@@ -35,7 +37,7 @@ interface SelectContextValue {
   value(): string | undefined
   active(): string | null
   disabled: boolean
-  labels: Map<string, JSX.Element>
+  labels(): Map<string, JSX.Element>
   trigger: { current: HostElement | null }
   /** `restoreFocus: false` when the user pressed elsewhere, so the press keeps
    *  the focus it just gave. */
@@ -98,13 +100,14 @@ export function Select(props: SelectProps): JSX.Element {
     setValue(next)
     setOpen(false)
   }
-  const labels = new Map<string, JSX.Element>()
-  for (const item of props.items ?? []) labels.set(item.value, item.label ?? item.textValue ?? item.value)
+  const labels = createMemo(() => new Map<string, JSX.Element>(
+    (props.items ?? []).map((item) => [item.value, item.label ?? item.textValue ?? item.value])
+  ))
   const valueContext: SelectContextValue = {
     open,
     value,
     active,
-    disabled: props.disabled ?? false,
+    get disabled() { return props.disabled ?? false },
     labels,
     trigger,
     setOpen,
@@ -122,11 +125,11 @@ export function Select(props: SelectProps): JSX.Element {
   return createComponent(SelectContext.Provider, {
     value: valueContext,
     get children() {
-      return jsx("div", {
-        ...props,
-        style: floatingRootStyle(props.style),
-        get children() { return props.children },
-      })
+      return jsx("div", forwardProps(
+        props,
+        ["items", "value", "defaultValue", "onValueChange", "open", "defaultOpen", "onOpenChange", "disabled"],
+        { get style() { return floatingRootStyle(props.style) } }
+      ))
     },
   })
 }
@@ -146,8 +149,7 @@ export function SelectTrigger(props: SelectTriggerProps): JSX.Element {
   return renderSlot({
     asChild: props.asChild,
     children: props.children,
-    props: {
-      ...props,
+    props: forwardProps(props, ["children", "asChild", "disabled"], {
       ref(element: HostElement) {
         state.trigger.current = element
         props.ref?.(element)
@@ -171,7 +173,7 @@ export function SelectTrigger(props: SelectTriggerProps): JSX.Element {
         else if (event.key === "up") state.open() ? state.move(-1) : state.setOpen(true)
         else if (event.key === "enter" || event.key === "space") state.setOpen(!state.open())
       },
-    },
+    }),
     defaultTabIndex: 0,
   })
 }
@@ -179,13 +181,12 @@ export function SelectTrigger(props: SelectTriggerProps): JSX.Element {
 export interface SelectValueProps extends HostProps { children?: JSX.Element; placeholder?: JSX.Element }
 export function SelectValue(props: SelectValueProps): JSX.Element {
   const state = context("SelectValue")
-  return jsx("div", {
-    ...props,
+  return jsx("div", forwardProps(props, ["placeholder"], {
     get children() {
       const selected = state.value()
-      return props.children ?? (selected === undefined ? props.placeholder : (state.labels.get(selected) ?? selected))
+      return props.children ?? (selected === undefined ? props.placeholder : (state.labels().get(selected) ?? selected))
     },
-    })
+  }))
 }
 
 export interface SelectContentProps extends FloatingContentProps {
@@ -203,18 +204,17 @@ export function SelectContent(props: SelectContentProps): JSX.Element {
           state.setOpen(false)
         },
         get children() {
-          return FloatingLayer({
-            ...props,
+          return createComponent(FloatingLayer, forwardProps(props, ["onEscapeKeyDown"], {
             // Focused only to receive keys; the highlighted item shows where
             // the user is, so the popup gets no focus look of its own.
             get style() { return { keyboardFocusDim: false, ...props.style } },
             autoFocus: true,
-            tabIndex: props.tabIndex ?? -1,
-            onMouseDownOutside(event) {
+            get tabIndex() { return props.tabIndex ?? -1 },
+            onMouseDownOutside(event: EventPayload) {
               props.onMouseDownOutside?.(event)
               state.setOpen(false, false)
             },
-            onKeyDown(event) {
+            onKeyDown(event: KeyEvent) {
               props.onKeyDown?.(event)
               // The popup is modal, like Base UI: Tab stays inside until it closes.
               if (event.key === "tab") event.preventDefault()
@@ -224,7 +224,7 @@ export function SelectContent(props: SelectContentProps): JSX.Element {
                 state.select(state.active()!)
               }
             },
-          })
+          }))
         },
       })
     },
@@ -241,7 +241,10 @@ export interface SelectItemProps extends Omit<HostProps, "style"> {
 }
 export function SelectItem(props: SelectItemProps): JSX.Element {
   const state = context("SelectItem")
-  onMount(() => onCleanup(state.register({ value: props.value, disabled: props.disabled ?? false })))
+  onMount(() => onCleanup(state.register({
+    get value() { return props.value },
+    get disabled() { return props.disabled ?? false },
+  })))
   const itemState = () => ({
     selected: state.value() === props.value,
     highlighted: state.active() === props.value,
@@ -252,8 +255,7 @@ export function SelectItem(props: SelectItemProps): JSX.Element {
     get children() {
       return typeof props.children === "function" ? props.children(itemState()) : props.children
     },
-    props: {
-      ...props,
+    props: forwardProps(props, ["children", "asChild", "value", "disabled"], {
       get style() { return resolveStyle(props.style, itemState()) },
       onMouseEnter(event: EventPayload) {
         props.onMouseEnter?.(event)
@@ -263,7 +265,7 @@ export function SelectItem(props: SelectItemProps): JSX.Element {
         props.onClick?.(event)
         if (!itemState().disabled) state.select(props.value)
       },
-    },
+    }),
   })
 }
 

@@ -16,6 +16,7 @@ import { useGpuixRequired } from "../root.js"
 import {
   FloatingLayer,
   floatingRootStyle,
+  forwardProps,
   renderSlot,
   resolveStyle,
   type FloatingContentProps,
@@ -77,7 +78,7 @@ export function Combobox(props: ComboboxProps): JSX.Element {
   const value = () => props.value === undefined ? internalValue() : props.value
   const input = () => props.inputValue === undefined ? internalInput() : props.inputValue
   const open = () => props.open === undefined ? internalOpen() : props.open
-  const itemToString = props.itemToStringValue ?? ((item: string) => item)
+  const itemToString = (item: string) => props.itemToStringValue?.(item) ?? item
   const filtered = () => {
     const query = input().trim().toLowerCase()
     if (props.filter === null) return [...(props.items ?? [])]
@@ -138,8 +139,8 @@ export function Combobox(props: ComboboxProps): JSX.Element {
     input,
     active,
     filtered,
-    disabled: props.disabled ?? false,
-    multiple: props.multiple ?? false,
+    get disabled() { return props.disabled ?? false },
+    get multiple() { return props.multiple ?? false },
     inputRef,
     setOpen,
     setInput,
@@ -154,11 +155,27 @@ export function Combobox(props: ComboboxProps): JSX.Element {
   return createComponent(ComboboxContext.Provider, {
     value: state,
     get children() {
-      return jsx("div", {
-        ...props,
-        style: floatingRootStyle(props.style),
-        get children() { return props.children },
-      })
+      return jsx("div", forwardProps(
+        props,
+        [
+          "items",
+          "value",
+          "defaultValue",
+          "onValueChange",
+          "inputValue",
+          "defaultInputValue",
+          "onInputValueChange",
+          "open",
+          "defaultOpen",
+          "onOpenChange",
+          "multiple",
+          "disabled",
+          "autoHighlight",
+          "filter",
+          "itemToStringValue",
+        ],
+        { get style() { return floatingRootStyle(props.style) } }
+      ))
     },
   })
 }
@@ -170,8 +187,7 @@ export interface ComboboxInputProps extends InputProps {
 export function ComboboxInput(props: ComboboxInputProps): JSX.Element {
   const state = context("ComboboxInput")
   const disabled = () => props.disabled ?? state.disabled
-  return jsx("input", {
-    ...props,
+  return jsx("input", forwardProps(props, ["disabled"], {
     ref(element: HostElement) {
       state.inputRef.current = element
       props.ref?.(element)
@@ -211,7 +227,7 @@ export function ComboboxInput(props: ComboboxInputProps): JSX.Element {
         if (item !== undefined) state.select(item)
       }
     },
-  })
+  }))
 }
 
 export interface ComboboxTriggerProps extends HostProps { children?: JSX.Element; asChild?: boolean; disabled?: boolean }
@@ -221,14 +237,13 @@ export function ComboboxTrigger(props: ComboboxTriggerProps): JSX.Element {
   return renderSlot({
     asChild: props.asChild,
     children: props.children,
-    props: {
-      ...props,
+    props: forwardProps(props, ["children", "asChild", "disabled"], {
       get tabIndex() { return disabled() ? -1 : props.tabIndex },
       onClick(event: EventPayload) {
         props.onClick?.(event)
         if (!disabled()) state.setOpen(!state.open())
       },
-    },
+    }),
     defaultTabIndex: 0,
   })
 }
@@ -239,15 +254,14 @@ export interface ComboboxValueProps extends HostProps {
 }
 export function ComboboxValue(props: ComboboxValueProps): JSX.Element {
   const state = context("ComboboxValue")
-  return jsx("div", {
-    ...props,
+  return jsx("div", forwardProps(props, ["placeholder"], {
     get children() {
       if (typeof props.children === "function") return props.children(state.value())
       if (props.children !== undefined) return props.children
       const value = state.value()
       return Array.isArray(value) ? value.join(", ") : (value ?? props.placeholder)
     },
-  })
+  }))
 }
 
 export function ComboboxContent(props: FloatingContentProps): JSX.Element {
@@ -259,13 +273,12 @@ export function ComboboxContent(props: FloatingContentProps): JSX.Element {
       return createComponent(DismissableLayer, {
         onEscapeKeyDown: () => state.setOpen(false),
         get children() {
-          return FloatingLayer({
-            ...props,
-            onMouseDownOutside(event) {
+          return createComponent(FloatingLayer, forwardProps(props, [], {
+            onMouseDownOutside(event: EventPayload) {
               props.onMouseDownOutside?.(event)
               state.setOpen(false)
             },
-          })
+          }))
         },
       })
     },
@@ -275,13 +288,12 @@ export function ComboboxContent(props: FloatingContentProps): JSX.Element {
 export interface ComboboxListProps extends HostProps { children?: JSX.Element | ((item: string) => JSX.Element) }
 export function ComboboxList(props: ComboboxListProps): JSX.Element {
   const state = context("ComboboxList")
-  return jsx("div", {
-    ...props,
+  return jsx("div", forwardProps(props, [], {
     get children() {
       if (typeof props.children !== "function") return props.children
       return createComponent(For, { get each() { return state.filtered() }, children: props.children })
     },
-  })
+  }))
 }
 
 export interface ComboboxItemState { selected: boolean; highlighted: boolean; disabled: boolean }
@@ -306,8 +318,7 @@ export function ComboboxItem(props: ComboboxItemProps): JSX.Element {
   return renderSlot({
     asChild: props.asChild,
     get children() { return typeof props.children === "function" ? props.children(itemState()) : props.children },
-    props: {
-      ...props,
+    props: forwardProps(props, ["children", "asChild", "value", "disabled"], {
       get style() { return resolveStyle(props.style, itemState()) },
       onMouseEnter(event: EventPayload) {
         props.onMouseEnter?.(event)
@@ -317,7 +328,7 @@ export function ComboboxItem(props: ComboboxItemProps): JSX.Element {
         props.onClick?.(event)
         if (!itemState().disabled) state.select(props.value)
       },
-    },
+    }),
   })
 }
 

@@ -13,6 +13,7 @@ import { jsx } from "../jsx-runtime.js"
 import {
   FloatingLayer,
   floatingRootStyle,
+  forwardProps,
   renderSlot,
   type FloatingContentProps,
   DismissableLayer,
@@ -91,10 +92,10 @@ export function Tooltip(props: TooltipProps): JSX.Element {
     if (previous !== next) props.onOpenChange?.(next)
     if (!next) provider.lastClosedAt.current = Date.now()
   }
-  const hoverable = !(props.disableHoverableContent ?? provider.disableHoverableContent)
+  const hoverable = () => !(props.disableHoverableContent ?? provider.disableHoverableContent)
   const state: TooltipState = {
     open,
-    hoverable,
+    get hoverable() { return hoverable() },
     openNow: () => setOpen(true),
     scheduleOpen() {
       cancelClose()
@@ -105,7 +106,7 @@ export function Tooltip(props: TooltipProps): JSX.Element {
     },
     scheduleClose() {
       cancelOpen()
-      if (!hoverable) setOpen(false)
+      if (!hoverable()) setOpen(false)
       else closeTimer = setTimeout(() => setOpen(false), 80)
     },
     cancelClose,
@@ -115,11 +116,11 @@ export function Tooltip(props: TooltipProps): JSX.Element {
   return createComponent(TooltipContext.Provider, {
     value: state,
     get children() {
-      return jsx("div", {
-        ...props,
-        style: floatingRootStyle(props.style),
-        get children() { return props.children },
-      })
+      return jsx("div", forwardProps(
+        props,
+        ["open", "defaultOpen", "onOpenChange", "delayDuration", "disableHoverableContent"],
+        { get style() { return floatingRootStyle(props.style) } }
+      ))
     },
   })
 }
@@ -130,15 +131,14 @@ export function TooltipTrigger(props: TooltipTriggerProps): JSX.Element {
   return renderSlot({
     asChild: props.asChild,
     children: props.children,
-    props: {
-      ...props,
+    props: forwardProps(props, ["children", "asChild"], {
       onMouseEnter(event: EventPayload) { props.onMouseEnter?.(event); state.scheduleOpen() },
       onMouseLeave(event: EventPayload) { props.onMouseLeave?.(event); state.scheduleClose() },
       onMouseDown(event: EventPayload) { props.onMouseDown?.(event); state.close() },
       onClick(event: EventPayload) { props.onClick?.(event); state.close() },
       onFocus(event: EventPayload) { props.onFocus?.(event); state.openNow() },
       onBlur(event: EventPayload) { props.onBlur?.(event); state.close() },
-    },
+    }),
     defaultTabIndex: 0,
   })
 }
@@ -153,19 +153,18 @@ export function TooltipContent(props: TooltipContentProps): JSX.Element {
       return createComponent(DismissableLayer, {
         onEscapeKeyDown: state.close,
         get children() {
-          return FloatingLayer({
-            ...props,
-            side: props.side ?? "top",
-            align: props.align ?? "center",
-            onMouseEnter(event) {
+          return createComponent(FloatingLayer, forwardProps(props, [], {
+            get side() { return props.side ?? "top" },
+            get align() { return props.align ?? "center" },
+            onMouseEnter(event: EventPayload) {
               props.onMouseEnter?.(event)
               if (state.hoverable) state.cancelClose()
             },
-            onMouseLeave(event) {
+            onMouseLeave(event: EventPayload) {
               props.onMouseLeave?.(event)
               state.scheduleClose()
             },
-          })
+          }))
         },
       })
     },
